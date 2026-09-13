@@ -83,7 +83,7 @@ Pass a `ConsentIQConfig` to `ConsentIQ`.
 | Field | Default | Purpose |
 | --- | --- | --- |
 | `propertyKey` | required | The property's public key from the dashboard. |
-| `apiUrl` | `https://consent.iqworks.ai` | Override for self-hosted or test environments. |
+| `apiUrl` | `https://consent.iqworks.ai` | Override when the property lives on another ConsentIQ deployment, such as a test environment. |
 | `subjectId` | null | Use your own subject id instead of a generated one. |
 | `autoGenerateSubjectId` | `true` | Generate and persist a UUID when no `subjectId` is given. |
 | `language` | property default | Language for the sheet, for example `en` or `ar`. |
