@@ -1,0 +1,29 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Verify the tag matches pubspec.yaml
+        run: |
+          version="$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml)"
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$tag" ]; then
+            echo "Tag v$tag does not match pubspec.yaml version $version"
+            exit 1
+          fi
+      - run: flutter pub get
+      - run: flutter test
+      # Automated publishing must be enabled on pub.dev for this package and this repository first.
+      - run: dart pub publish --force
