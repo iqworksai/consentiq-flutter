@@ -1,0 +1,31 @@
+name: consentiq
+description: ConsentIQ consent management SDK for Flutter apps that shows a consent sheet, records choices against a pseudonymous subject, and gates features on consent.
+version: 1.0.0
+homepage: https://consent.iqworks.ai
+repository: https://github.com/iqworksai/consentiq-flutter
+issue_tracker: https://github.com/iqworksai/consentiq-flutter/issues
+topics:
+  - consent
+  - privacy
+  - dpdp
+  - gdpr
+  - pdpl
+
+environment:
+  sdk: ^3.5.0
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.6.0
+  shared_preferences: ^2.3.4
+  url_launcher: ^6.3.1
+  uuid: ^4.6.0
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
