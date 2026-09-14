@@ -16,6 +16,7 @@ jobs:
           channel: stable
           cache: true
       - name: Verify the tag matches pubspec.yaml
+        id: version
         run: |
           version="$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml)"
           tag="${GITHUB_REF_NAME#v}"
@@ -23,7 +24,20 @@ jobs:
             echo "Tag v$tag does not match pubspec.yaml version $version"
             exit 1
           fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      # pub.dev keeps every version forever, so re-running a release must converge rather than fail.
+      - name: Check whether this version is already on pub.dev
+        id: published
+        run: |
+          if curl -sf "https://pub.dev/api/packages/consentiq" \
+            | grep -q "\"version\":\"${{ steps.version.outputs.version }}\""; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "consentiq ${{ steps.version.outputs.version }} is already published; skipping the publish step."
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
       - run: flutter pub get
       - run: flutter test
       # Automated publishing must be enabled on pub.dev for this package and this repository first.
-      - run: dart pub publish --force
+      - if: steps.published.outputs.already == 'false'
+        run: dart pub publish --force
