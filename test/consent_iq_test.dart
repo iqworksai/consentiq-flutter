@@ -454,10 +454,12 @@ void main() {
       expect(closed, 1);
     });
 
-    test('resetConsent restores defaults and clears storage', () async {
+    test('resetConsent restores defaults and rotates to a fresh subject id',
+        () async {
       final consentIQ = build(FakeServer(consent: savedConsentJson()));
       await consentIQ.init();
       expect(consentIQ.hasConsent('analytics'), isTrue);
+      final before = consentIQ.subjectId;
 
       await consentIQ.resetConsent();
 
@@ -465,7 +467,9 @@ void main() {
       expect(consentIQ.marketingConsent, isEmpty);
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString('consentiq_consent'), isNull);
-      expect(prefs.getString('consentiq_subject_id'), isNull);
+      expect(consentIQ.subjectId, isNotNull);
+      expect(consentIQ.subjectId, isNot(before));
+      expect(prefs.getString('consentiq_subject_id'), consentIQ.subjectId);
     });
   });
 }

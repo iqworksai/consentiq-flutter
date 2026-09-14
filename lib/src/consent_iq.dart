@@ -204,6 +204,10 @@ class ConsentIQ extends ChangeNotifier {
     _marketingConsent = {};
     _notify();
     await _storage.clearAll();
+    _subjectId = options.subjectId ??
+        (options.autoGenerateSubjectId
+            ? await _storage.getOrCreateSubjectId()
+            : null);
   }
 
   Future<void> _submit() async {
