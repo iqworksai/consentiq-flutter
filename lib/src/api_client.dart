@@ -53,7 +53,7 @@ class ConsentIQApiClient {
   }
 
   Future<ConsentLookup> getConsent(String subjectId) async {
-    _logger.log('Fetching consent for subject $subjectId');
+    _logger.log('Fetching consent');
     final json = await _get(
       '/api/public/consent/${Uri.encodeComponent(propertyKey)}'
       '/${Uri.encodeComponent(subjectId)}',
@@ -93,7 +93,7 @@ class ConsentIQApiClient {
     _logger.log('Submitting consent ($consentMethod)');
     final json = await _post('/api/public/consent', body);
     final result = ConsentSubmission.fromJson(json);
-    _logger.log('Consent submitted: ${result.consentId}');
+    _logger.log('Consent submitted');
     return result;
   }
 

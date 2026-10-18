@@ -1,6 +1,7 @@
 import 'dart:io' show Platform;
 
 import 'package:consentiq/consentiq.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 
 void main() {
@@ -10,7 +11,7 @@ void main() {
       propertyKey: Platform.isIOS
           ? 'YOUR_IOS_PROPERTY_KEY'
           : 'YOUR_ANDROID_PROPERTY_KEY',
-      debug: true,
+      debug: kDebugMode,
       onConsentChange: (consent, marketing) =>
           debugPrint('consent changed: $consent'),
       onAccept: (event) => debugPrint('accepted ${event.scope.name}'),

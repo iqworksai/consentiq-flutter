@@ -83,12 +83,12 @@ Pass a `ConsentIQConfig` to `ConsentIQ`.
 | Field | Default | Purpose |
 | --- | --- | --- |
 | `propertyKey` | required | The property's public key from the dashboard. |
-| `apiUrl` | `https://consent.iqworks.ai` | Override when the property lives on another ConsentIQ deployment, such as a test environment. |
-| `subjectId` | null | Use your own subject id instead of a generated one. |
+| `apiUrl` | `https://consent.iqworks.ai` | ConsentIQ base URL. |
+| `subjectId` | null | Use your own subject id instead of a generated one. It must be random and unguessable, never an account number, email address or phone number: the consent lookup needs only the property key, which ships in your app. |
 | `autoGenerateSubjectId` | `true` | Generate and persist a UUID when no `subjectId` is given. |
 | `language` | property default | Language for the sheet, for example `en` or `ar`. |
 | `autoShow` | `true` | Show the sheet on init when no consent is recorded. |
-| `debug` | `false` | Verbose logging prefixed `[ConsentIQ]`. |
+| `debug` | `false` | Verbose logging prefixed `[ConsentIQ]`. Turn it on in debug builds only. |
 
 ### State and operations
 
@@ -129,7 +129,7 @@ The sheet renders the property's title, description and button labels in the act
 ```dart
 final form = FormConsent(
   propertyKey: 'YOUR_IOS_PROPERTY_KEY',
-  subjectId: 'user-42',
+  subjectId: user.consentSubjectId, // random and unguessable, stored per user
 );
 form.setChannel('email', true);
 final result = await form.submit();

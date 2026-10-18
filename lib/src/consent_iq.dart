@@ -90,7 +90,7 @@ class ConsentIQ extends ChangeNotifier {
         options.onOpen?.call();
       }
     } catch (e) {
-      _logger.warn('Failed to initialize: $e');
+      _logger.warn('Failed to initialize', e);
       _isLoading = false;
       _notify();
     }
@@ -101,7 +101,7 @@ class ConsentIQ extends ChangeNotifier {
     try {
       lookup = await _api.getConsent(sid);
     } catch (e) {
-      _logger.warn('Failed to load consent, using local cache: $e');
+      _logger.warn('Failed to load consent, using local cache', e);
     }
     final saved = lookup?.consent;
     if (saved != null) {
@@ -231,7 +231,7 @@ class ConsentIQ extends ChangeNotifier {
         Map.unmodifiable(marketingConsents),
       );
     } catch (e) {
-      _logger.warn('Failed to submit consent: $e');
+      _logger.warn('Failed to submit consent', e);
     }
   }
 

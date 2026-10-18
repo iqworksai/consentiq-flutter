@@ -92,7 +92,7 @@ class FormConsent extends ChangeNotifier {
       onConsentSubmitted?.call(result);
       return result;
     } catch (e) {
-      _logger.warn('Failed to submit form consent: $e');
+      _logger.warn('Failed to submit form consent', e);
       return null;
     } finally {
       _isSubmitting = false;

@@ -1,5 +1,7 @@
 import 'package:consentiq/consentiq.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'fixtures.dart';
@@ -133,6 +135,36 @@ void main() {
       expect(consentIQ.hasConsent('analytics'), isTrue);
       expect(logs.where((l) => l.startsWith('[ConsentIQ] Failed to load')),
           hasLength(1));
+    });
+
+    test('a lookup network failure never logs the subject id', () async {
+      SharedPreferences.setMockInitialValues({
+        'consentiq_subject_id': 'sid-private-42',
+      });
+      final client = MockClient((request) async {
+        if (request.url.path.startsWith('/api/public/consent/')) {
+          throw http.ClientException('Connection refused', request.url);
+        }
+        return jsonResponse(configJson(), 200);
+      });
+      final consentIQ = ConsentIQ(
+        const ConsentIQConfig(propertyKey: testPropertyKey),
+        apiClient: ConsentIQApiClient(
+          propertyKey: testPropertyKey,
+          apiUrl: testApiUrl,
+          client: client,
+        ),
+        storage: ConsentStorage(),
+      );
+
+      final logs = await captureLogs(consentIQ.init);
+
+      expect(
+        logs,
+        contains(
+            '[ConsentIQ] Failed to load consent, using local cache: ClientException'),
+      );
+      expect(logs.join('\n'), isNot(contains('sid-private-42')));
     });
 
     test('config failure leaves the app usable and logs once', () async {
