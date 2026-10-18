@@ -250,6 +250,21 @@ void main() {
       );
     });
 
+    test('submitConsent sends captchaToken only when given', () async {
+      final server = FakeServer();
+      final client = ConsentIQApiClient(
+        propertyKey: testPropertyKey,
+        apiUrl: testApiUrl,
+        client: server.client,
+      );
+
+      await client.submitConsent(subjectId: 's', captchaToken: 'tok');
+      await client.submitConsent(subjectId: 's');
+
+      expect(server.submits.first.json['captchaToken'], 'tok');
+      expect(server.submits.last.json.containsKey('captchaToken'), isFalse);
+    });
+
     test('captcha refusal on submit surfaces the server message', () async {
       final client = ConsentIQApiClient(
         propertyKey: testPropertyKey,
@@ -266,6 +281,7 @@ void main() {
         client.submitConsent(
           subjectId: 's',
           cookieConsents: const {'necessary': true},
+          captchaToken: 'expired',
         ),
         throwsA(
           isA<ConsentIQApiException>().having(

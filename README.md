@@ -116,7 +116,7 @@ Every write updates local state first, then posts to ConsentIQ, then caches the 
 
 ### Widgets
 
-- `ConsentIQProvider(consentIQ:, child:)`: an `InheritedNotifier` that exposes the `ConsentIQ`.
+- `ConsentIQProvider(consentIQ:, child:)`: an `InheritedNotifier` that exposes the `ConsentIQ`. It also hosts the hidden web view for the [captcha](#captcha) check.
 - `ConsentSheet({child})`: presents the consent sheet as a modal bottom sheet whenever `isSheetVisible` is true. Must sit below a `Navigator`. Renders `child` in place.
 - `ConsentGate(category:, child:, placeholder:)`: renders `child` only while `hasConsent(category)` is true, otherwise `placeholder`.
 
@@ -154,9 +154,15 @@ All callbacks on `ConsentIQConfig` are optional.
 | `onSave(event)` | The visitor saved a custom selection. |
 | `onClose()` | The visitor backed out with the back button, a swipe or a tap outside the sheet. Never fires on accept, reject, save or `hideSheet()`. |
 
-## Limitations
+## Captcha
 
-**Captcha.** ConsentIQ can require a Cloudflare Turnstile check on every consent submission for a property. Turnstile has no native mobile SDK, so a property with "Require captcha" turned on refuses every submission from this SDK with HTTP 400. The SDK logs a warning at init when it detects this. Turn off "Require captcha" for your iOS and Android properties in the ConsentIQ dashboard.
+When "Require CAPTCHA" is on for a property, the SDK runs a Cloudflare Turnstile check before each submission, invisibly, in a hidden web view loaded from your ConsentIQ URL (`https://consent.iqworks.ai` by default) and from challenges.cloudflare.com. There is nothing to configure.
+
+- Keep `ConsentIQProvider` mounted above the app, as Quick start already asks. It hosts the web view, for `FormConsent` too.
+- If the check fails or Turnstile wants the visitor to solve a challenge, nothing is sent and a `[ConsentIQ]` warning is logged. `ConsentIQ` keeps the choice on the device, as for any failed submission, and `FormConsent.submit()` returns null.
+- List Cloudflare Turnstile in your app's privacy disclosures, such as the App Store privacy details and the Google Play data safety form.
+
+In tests, pass a `captchaTokenSource` to `ConsentIQ` or `FormConsent` so no web view is created.
 
 ## License
 

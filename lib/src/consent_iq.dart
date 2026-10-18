@@ -1,12 +1,14 @@
 import 'package:flutter/foundation.dart';
 
 import 'api_client.dart';
+import 'captcha.dart';
 import 'config.dart';
 import 'consent_state.dart';
 import 'log.dart';
 import 'models.dart';
 import 'storage.dart';
 
+@Deprecated('Unused since 1.1.0, which passes the captcha check itself.')
 const String captchaWarning =
     'This property requires a captcha, which mobile SDKs cannot satisfy. '
     'Turn off "Require captcha" for this property in the ConsentIQ dashboard.';
@@ -14,9 +16,12 @@ const String captchaWarning =
 /// The consent state machine. Create one per app, call [init] once, and read
 /// it through [ConsentIQProvider] or listen to it directly.
 class ConsentIQ extends ChangeNotifier {
-  ConsentIQ(this.options,
-      {ConsentIQApiClient? apiClient, ConsentStorage? storage})
-      : _api = apiClient ??
+  ConsentIQ(
+    this.options, {
+    ConsentIQApiClient? apiClient,
+    ConsentStorage? storage,
+    CaptchaTokenSource? captchaTokenSource,
+  })  : _api = apiClient ??
             ConsentIQApiClient(
               propertyKey: options.propertyKey,
               apiUrl: options.apiUrl,
@@ -24,6 +29,7 @@ class ConsentIQ extends ChangeNotifier {
             ),
         _ownsApi = apiClient == null,
         _storage = storage ?? ConsentStorage(),
+        _captchaTokenSource = captchaTokenSource,
         _logger = ConsentIQLogger(debug: options.debug),
         _language = options.language ?? 'en';
 
@@ -31,6 +37,7 @@ class ConsentIQ extends ChangeNotifier {
   final ConsentIQApiClient _api;
   final bool _ownsApi;
   final ConsentStorage _storage;
+  final CaptchaTokenSource? _captchaTokenSource;
   final ConsentIQLogger _logger;
 
   ConsentState _consent = defaultConsentState();
@@ -73,7 +80,6 @@ class ConsentIQ extends ChangeNotifier {
       _config = config;
       _regulation = config.resolvedRegulation;
       _language = options.language ?? config.property.defaultLanguage ?? 'en';
-      if (config.requireCaptcha) _logger.warn(captchaWarning);
 
       var found = false;
       final sid = _subjectId;
@@ -218,12 +224,24 @@ class ConsentIQ extends ChangeNotifier {
     }
     final cookieConsents = Map<String, bool>.of(_consent);
     final marketingConsents = Map<String, bool>.of(_marketingConsent);
+    final config = _config;
+    String? captchaToken;
+    if (config != null && requiresCaptcha(config)) {
+      try {
+        captchaToken = await (_captchaTokenSource ??
+            CaptchaController.forApiUrl(_api.apiUrl).token)();
+      } catch (_) {
+        _logger.warn(captchaFailedWarning);
+        return;
+      }
+    }
     try {
       await _api.submitConsent(
         subjectId: sid,
         cookieConsents: cookieConsents,
         marketingConsents: marketingConsents,
         consentMethod: 'sdk',
+        captchaToken: captchaToken,
       );
       await _storage.saveConsent(cookieConsents);
       options.onConsentChange?.call(

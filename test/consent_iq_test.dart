@@ -6,7 +6,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'fixtures.dart';
 
-ConsentIQ build(FakeServer server, {ConsentIQConfig? options}) {
+ConsentIQ build(
+  FakeServer server, {
+  ConsentIQConfig? options,
+  FakeCaptcha? captcha,
+}) {
   final config = options ?? const ConsentIQConfig(propertyKey: testPropertyKey);
   return ConsentIQ(
     config,
@@ -16,8 +20,13 @@ ConsentIQ build(FakeServer server, {ConsentIQConfig? options}) {
       client: server.client,
     ),
     storage: ConsentStorage(),
+    captchaTokenSource: captcha?.call,
   );
 }
+
+FakeServer captchaServer() => FakeServer(
+      config: configJson(requireCaptcha: true, turnstileSiteKey: 'site-key'),
+    );
 
 Future<String?> cachedConsent() async =>
     (await SharedPreferences.getInstance()).getString('consentiq_consent');
@@ -255,32 +264,14 @@ void main() {
       expect(consentIQ.isSheetVisible, isTrue);
     });
 
-    test('captcha warning is logged exactly once', () async {
-      final consentIQ = build(
-        FakeServer(config: configJson(requireCaptcha: true)),
-      );
-
-      final logs = await captureLogs(() async {
-        await consentIQ.init();
-        await consentIQ.init();
-      });
-
-      expect(
-          logs.where((l) => l == '[ConsentIQ] $captchaWarning'), hasLength(1));
-      expect(
-        captchaWarning,
-        'This property requires a captcha, which mobile SDKs cannot satisfy. '
-        'Turn off "Require captcha" for this property in the ConsentIQ '
-        'dashboard.',
-      );
-    });
-
-    test('no captcha warning when the property does not require one', () async {
-      final consentIQ = build(FakeServer());
+    test('no startup warning when the property requires a captcha', () async {
+      final captcha = FakeCaptcha();
+      final consentIQ = build(captchaServer(), captcha: captcha);
 
       final logs = await captureLogs(consentIQ.init);
 
       expect(logs, isEmpty);
+      expect(captcha.calls, 0);
     });
 
     test('init runs once', () async {
@@ -433,6 +424,69 @@ void main() {
       expect(await cachedConsent(), isNull);
       expect(logs, hasLength(1));
       expect(logs.single, startsWith('[ConsentIQ] Failed to submit consent'));
+    });
+
+    test('requireCaptcha: every submit sends a fresh token', () async {
+      final server = captchaServer();
+      final captcha = FakeCaptcha();
+      final consentIQ = build(server, captcha: captcha);
+      await consentIQ.init();
+
+      await consentIQ.acceptAll();
+      await consentIQ.updateMarketingConsent({'email': true});
+
+      expect(captcha.calls, 2);
+      expect(server.submits, hasLength(2));
+      for (final submit in server.submits) {
+        expect(submit.json['captchaToken'], 'tok');
+      }
+      expect(await ConsentStorage().loadConsent(), consentIQ.consent);
+    });
+
+    test('captcha failure: nothing posted, local state kept, warning logged',
+        () async {
+      final server = captchaServer();
+      var changes = 0;
+      ConsentAcceptEvent? accepted;
+      final consentIQ = build(
+        server,
+        options: ConsentIQConfig(
+          propertyKey: testPropertyKey,
+          onConsentChange: (_, __) => changes++,
+          onAccept: (e) => accepted = e,
+        ),
+        captcha: FakeCaptcha(null),
+      );
+      await consentIQ.init();
+
+      final logs = await captureLogs(consentIQ.acceptAll);
+
+      expect(server.submits, isEmpty);
+      expect(consentIQ.hasConsent('analytics'), isTrue);
+      expect(consentIQ.isSheetVisible, isFalse);
+      expect(accepted, isNotNull);
+      expect(changes, 0);
+      expect(await cachedConsent(), isNull);
+      expect(logs, ['[ConsentIQ] Captcha check failed; consent not submitted']);
+    });
+
+    test('no captcha required: token source unused, no captchaToken key',
+        () async {
+      for (final config in [
+        configJson(),
+        configJson(requireCaptcha: true),
+        configJson(turnstileSiteKey: 'site-key'),
+      ]) {
+        final server = FakeServer(config: config);
+        final captcha = FakeCaptcha();
+        final consentIQ = build(server, captcha: captcha);
+        await consentIQ.init();
+
+        await consentIQ.acceptAll();
+
+        expect(captcha.calls, 0);
+        expect(server.submits.single.json.containsKey('captchaToken'), isFalse);
+      }
     });
 
     test('without a subject id nothing is posted', () async {

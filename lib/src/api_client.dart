@@ -77,6 +77,7 @@ class ConsentIQApiClient {
     String? geoSource,
     String consentMethod = 'sdk',
     String? consentVersion,
+    String? captchaToken,
   }) async {
     final body = <String, Object?>{
       'propertyKey': propertyKey,
@@ -89,6 +90,7 @@ class ConsentIQApiClient {
       if (geoSource != null) 'geoSource': geoSource,
       'consentMethod': consentMethod,
       if (consentVersion != null) 'consentVersion': consentVersion,
+      if (captchaToken != null) 'captchaToken': captchaToken,
     };
     _logger.log('Submitting consent ($consentMethod)');
     final json = await _post('/api/public/consent', body);

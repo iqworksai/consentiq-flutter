@@ -2,6 +2,7 @@
 library;
 
 export 'src/api_client.dart' show ConsentIQApiClient, ConsentIQApiException;
+export 'src/captcha.dart' show CaptchaTokenSource;
 export 'src/config.dart';
 export 'src/consent_gate.dart';
 export 'src/consent_iq.dart' show ConsentIQ, captchaWarning;

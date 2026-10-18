@@ -9,6 +9,7 @@ const String testApiUrl = 'https://consent.example.test';
 
 Map<String, dynamic> configJson({
   bool requireCaptcha = false,
+  String? turnstileSiteKey,
   String? defaultLanguage = 'en',
   String? noticeUrl = 'https://consent.example.test/api/public/privacy/pk',
   String? primaryColor = '#123456',
@@ -78,7 +79,7 @@ Map<String, dynamic> configJson({
       'formConsentSources': <Object>[],
       'privacyNoticeUrl': null,
       'requireCaptcha': requireCaptcha,
-      'turnstileSiteKey': null,
+      'turnstileSiteKey': turnstileSiteKey,
       'autoBlock': false,
       'translations': {
         'en': {
@@ -203,6 +204,22 @@ class FakeServer {
         }
         return http.Response('{"error":"Not found"}', 404);
       });
+}
+
+/// A captcha token source that counts its calls and returns [token], or
+/// throws when [token] is null.
+class FakeCaptcha {
+  FakeCaptcha([this.token = 'tok']);
+
+  final String? token;
+  int calls = 0;
+
+  Future<String> call() async {
+    calls++;
+    final value = token;
+    if (value == null) throw StateError('no token');
+    return value;
+  }
 }
 
 /// Captures `debugPrint` output for the duration of a test body.
