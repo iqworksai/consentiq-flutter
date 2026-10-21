@@ -31,3 +31,10 @@ dev_dependencies:
   webview_flutter_platform_interface: ^2.10.0
 
 flutter:
+  plugin:
+    platforms:
+      android:
+        package: ai.iqworks.consentiq
+        pluginClass: ConsentIQPlugin
+      ios:
+        pluginClass: ConsentIQPlugin

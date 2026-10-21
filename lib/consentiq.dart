@@ -13,3 +13,4 @@ export 'src/form_consent.dart';
 export 'src/models.dart';
 export 'src/provider.dart';
 export 'src/storage.dart';
+export 'src/tcf_key_store.dart' show TcfKeyStore;

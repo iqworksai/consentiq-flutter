@@ -14,6 +14,7 @@ Map<String, dynamic> configJson({
   String? noticeUrl = 'https://consent.example.test/api/public/privacy/pk',
   String? primaryColor = '#123456',
   String? bannerDescription = 'We use cookies to improve your experience.',
+  Map<String, dynamic>? tcf,
 }) =>
     {
       'property': {
@@ -121,7 +122,33 @@ Map<String, dynamic> configJson({
         },
       },
       'rtl': ['ar', 'ur', 'ks', 'sd'],
+      if (tcf != null) 'tcf': tcf,
       'someFutureField': {'ignored': true},
+    };
+
+Map<String, dynamic> tcfJson({
+  bool enabled = true,
+  bool gdprApplies = true,
+  int cmpId = 300,
+  int cmpVersion = 1,
+}) =>
+    {
+      'enabled': enabled,
+      'gdprApplies': gdprApplies,
+      'vendorIds': [1, 2, 755],
+      'publisherCountryCode': 'DE',
+      'publisherRestrictions': [
+        {
+          'purposeId': 2,
+          'restrictionType': 1,
+          'vendorIds': [755],
+        },
+      ],
+      'repromptMonths': 13,
+      'tcfPolicyVersion': 5,
+      'cmpId': cmpId,
+      'cmpVersion': cmpVersion,
+      'vendorListUrl': '/api/public/tcf/$testPropertyKey/vendor-list?v=abc',
     };
 
 Map<String, dynamic> savedConsentJson({

@@ -7,6 +7,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'json.dart';
 import 'log.dart';
 import 'models.dart';
+import 'web_view.dart';
 
 /// Returns a fresh, single-use captcha token, or throws when none can be had.
 typedef CaptchaTokenSource = Future<String> Function();
@@ -16,7 +17,7 @@ const String captchaFailedWarning =
 const String captchaNoHostWarning =
     'Captcha needs ConsentIQProvider mounted above the app';
 const String captchaPagePath = '/api/public/captcha/mobile';
-const String captchaChannel = 'ConsentIQFlutter';
+const String captchaChannel = webViewChannel;
 const Duration captchaTimeout = Duration(seconds: 15);
 
 bool requiresCaptcha(PropertyConfig config) =>
@@ -31,14 +32,14 @@ class CaptchaException implements Exception {
   String toString() => 'CaptchaException: $code';
 }
 
-/// Runs the hosted Turnstile page in a hidden web view that a [CaptchaHost]
-/// displays. One per API URL for the process, shared by every caller.
+/// Runs the hosted Turnstile page in a hidden web view that a
+/// [HiddenWebViewHost] displays. One per API URL for the process, shared by every caller.
 class CaptchaController {
   CaptchaController._(String apiUrl)
       : pageUrl = Uri.parse('$apiUrl$captchaPagePath');
 
   static final Map<String, CaptchaController> _byApiUrl = {};
-  static final _HostRegistry _registry = _HostRegistry();
+  static HiddenWebViews get _registry => HiddenWebViews.instance;
   static bool _warnedNoHost = false;
 
   static CaptchaController forApiUrl(String apiUrl) =>
@@ -47,7 +48,7 @@ class CaptchaController {
   @visibleForTesting
   static void resetForTesting() {
     _byApiUrl.clear();
-    _registry.controllers.clear();
+    _registry.clear();
     _warnedNoHost = false;
   }
 
@@ -57,6 +58,8 @@ class CaptchaController {
   Completer<void>? _ready;
   Completer<String>? _token;
   Future<void> _queue = Future<void>.value();
+  late final HostedPageChannel _channel =
+      HostedPageChannel(pageUrl, _onMessage);
 
   @visibleForTesting
   void loadPage() => _ensureLoaded();
@@ -113,11 +116,12 @@ class CaptchaController {
     await webView.setJavaScriptMode(JavaScriptMode.unrestricted);
     await webView.addJavaScriptChannel(
       captchaChannel,
-      onMessageReceived: _onMessage,
+      onMessageReceived: _channel.receive,
     );
     await webView.setNavigationDelegate(
       NavigationDelegate(
-        onNavigationRequest: _decideNavigation,
+        onNavigationRequest: (request) =>
+            decideHostedNavigation(request, pageUrl),
         onWebResourceError: (error) {
           if (error.isForMainFrame ?? true) _reset('load');
         },
@@ -128,27 +132,15 @@ class CaptchaController {
         },
       ),
     );
-    _webView = webView;
-    _registry.add(this);
+    _webView = _channel.webView = webView;
+    _registry.add(webView);
     return webView;
   }
 
-  NavigationDecision _decideNavigation(NavigationRequest request) {
-    final uri = Uri.tryParse(request.url);
-    final allowed = request.isMainFrame
-        ? uri == pageUrl
-        : uri != null &&
-            (uri.toString() == 'about:blank' ||
-                uri.toString() == 'about:srcdoc' ||
-                (uri.scheme == 'https' &&
-                    uri.host == 'challenges.cloudflare.com'));
-    return allowed ? NavigationDecision.navigate : NavigationDecision.prevent;
-  }
-
-  void _onMessage(JavaScriptMessage message) {
+  void _onMessage(String message) {
     final Object? decoded;
     try {
-      decoded = jsonDecode(message.message);
+      decoded = jsonDecode(message);
     } on FormatException {
       return;
     }
@@ -179,99 +171,5 @@ class CaptchaController {
     _token = null;
     if (ready != null && !ready.isCompleted) ready.completeError(error);
     if (token != null && !token.isCompleted) token.completeError(error);
-  }
-}
-
-class _HostRegistry extends ChangeNotifier {
-  final List<CaptchaController> controllers = [];
-  final List<Object> hosts = [];
-
-  void add(CaptchaController controller) {
-    controllers.add(controller);
-    notifyListeners();
-  }
-
-  bool isActive(Object host) =>
-      hosts.isNotEmpty && identical(hosts.first, host);
-
-  void attach(Object host) => hosts.add(host);
-
-  void detach(Object host) {
-    final wasActive = isActive(host);
-    hosts.remove(host);
-    // Unmounting runs while the tree is locked, so the next host takes over
-    // after this frame.
-    if (wasActive && hosts.isNotEmpty) scheduleMicrotask(notifyListeners);
-  }
-}
-
-/// Renders [child] as is, plus the hidden captcha web views while any are
-/// needed. Only the first mounted host displays them, since a web view can
-/// show in one place at a time.
-class CaptchaHost extends StatefulWidget {
-  const CaptchaHost({super.key, required this.child});
-
-  final Widget child;
-
-  @override
-  State<CaptchaHost> createState() => _CaptchaHostState();
-}
-
-class _CaptchaHostState extends State<CaptchaHost> {
-  static _HostRegistry get _registry => CaptchaController._registry;
-
-  @override
-  void initState() {
-    super.initState();
-    _registry.attach(this);
-    _registry.addListener(_changed);
-  }
-
-  @override
-  void dispose() {
-    _registry.removeListener(_changed);
-    _registry.detach(this);
-    super.dispose();
-  }
-
-  void _changed() {
-    if (mounted) setState(() {});
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final controllers = _registry.isActive(this)
-        ? _registry.controllers
-        : const <CaptchaController>[];
-    // The Stack is always there, so the child keeps its element and state
-    // when a web view comes or goes. Passthrough keeps its constraints.
-    return Stack(
-      alignment: Alignment.topLeft,
-      textDirection: TextDirection.ltr,
-      fit: StackFit.passthrough,
-      clipBehavior: Clip.none,
-      children: [
-        widget.child,
-        for (final controller in controllers)
-          Positioned(
-            key: ObjectKey(controller),
-            left: 0,
-            top: 0,
-            width: 1,
-            height: 1,
-            child: IgnorePointer(
-              child: Opacity(
-                opacity: 0.01,
-                child: ExcludeSemantics(
-                  child: Directionality(
-                    textDirection: TextDirection.ltr,
-                    child: WebViewWidget(controller: controller._webView!),
-                  ),
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
   }
 }

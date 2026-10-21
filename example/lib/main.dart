@@ -19,6 +19,7 @@ void main() {
       onSave: (_) => debugPrint('saved'),
       onOpen: () => debugPrint('sheet opened'),
       onClose: () => debugPrint('sheet dismissed'),
+      onError: (error) => debugPrint('recovered from $error'),
     ),
   );
   consentIQ.init();

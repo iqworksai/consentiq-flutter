@@ -272,6 +272,78 @@ class BannerLabels {
   final String viewNotice;
 }
 
+class TcfPublisherRestriction {
+  const TcfPublisherRestriction({
+    required this.purposeId,
+    required this.restrictionType,
+    this.vendorIds = const [],
+  });
+
+  factory TcfPublisherRestriction.fromJson(Map<String, dynamic> json) =>
+      TcfPublisherRestriction(
+        purposeId: asIntOrNull(json['purposeId']) ?? 0,
+        restrictionType: asIntOrNull(json['restrictionType']) ?? 0,
+        vendorIds: asIntList(json['vendorIds']),
+      );
+
+  final int purposeId;
+
+  /// 0 not allowed, 1 consent required, 2 legitimate interest required.
+  final int restrictionType;
+  final List<int> vendorIds;
+}
+
+/// The property's IAB TCF settings, present only when TCF is on for it.
+class TcfSettings {
+  const TcfSettings({
+    this.enabled = false,
+    this.gdprApplies = true,
+    this.vendorIds = const [],
+    this.publisherCountryCode,
+    this.publisherRestrictions = const [],
+    this.repromptMonths,
+    this.tcfPolicyVersion,
+    this.cmpId = 0,
+    this.cmpVersion = 0,
+    this.vendorListUrl,
+  });
+
+  factory TcfSettings.fromJson(Map<String, dynamic> json) => TcfSettings(
+        enabled: asBool(json['enabled']),
+        gdprApplies: asBool(json['gdprApplies'], true),
+        vendorIds: asIntList(json['vendorIds']),
+        publisherCountryCode: asStringOrNull(json['publisherCountryCode']),
+        publisherRestrictions: asMapList(json['publisherRestrictions'])
+            .map(TcfPublisherRestriction.fromJson)
+            .toList(growable: false),
+        repromptMonths: asIntOrNull(json['repromptMonths']),
+        tcfPolicyVersion: asIntOrNull(json['tcfPolicyVersion']),
+        cmpId: asIntOrNull(json['cmpId']) ?? 0,
+        cmpVersion: asIntOrNull(json['cmpVersion']) ?? 0,
+        vendorListUrl: asStringOrNull(json['vendorListUrl']),
+      );
+
+  final bool enabled;
+
+  /// Whether GDPR applies to this caller, from the server's geo lookup.
+  final bool gdprApplies;
+  final List<int> vendorIds;
+  final String? publisherCountryCode;
+  final List<TcfPublisherRestriction> publisherRestrictions;
+  final int? repromptMonths;
+  final int? tcfPolicyVersion;
+
+  /// The CMP ID IAB Europe issued. Below 2 the SDK stays out of TCF.
+  final int cmpId;
+  final int cmpVersion;
+
+  /// For the hosted page, which fetches it; may be a path on the API origin.
+  final String? vendorListUrl;
+
+  /// Whether the SDK runs the TCF flow for this property.
+  bool get isActive => enabled && cmpId >= 2;
+}
+
 /// A property's configuration as served by `GET /api/public/config/{key}`.
 class PropertyConfig {
   const PropertyConfig({
@@ -290,6 +362,7 @@ class PropertyConfig {
     this.translations = const {},
     this.labels = const {},
     this.rtl = const [],
+    this.tcf,
   });
 
   factory PropertyConfig.fromJson(Map<String, dynamic> json) => PropertyConfig(
@@ -323,6 +396,9 @@ class PropertyConfig {
           (lang, value) => MapEntry(lang, BannerLabels.fromJson(asMap(value))),
         ),
         rtl: asStringList(json['rtl']),
+        tcf: json['tcf'] is Map
+            ? TcfSettings.fromJson(asMap(json['tcf']))
+            : null,
       );
 
   final PropertyInfo property;
@@ -346,6 +422,9 @@ class PropertyConfig {
 
   /// Language codes that render right-to-left.
   final List<String> rtl;
+
+  /// IAB TCF settings, or null when TCF is off for the property.
+  final TcfSettings? tcf;
 
   static String baseTag(String language) =>
       language.split('-').first.toLowerCase();

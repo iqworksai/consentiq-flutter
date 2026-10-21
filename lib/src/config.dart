@@ -22,11 +22,27 @@ class ConsentSaveEvent {
   final ConsentState consent;
 }
 
+/// A failure the SDK recovered from. The app keeps running.
+class ConsentIQError {
+  const ConsentIQError({required this.source, required this.code});
+
+  /// What failed: `tcf` for the IAB TCF page and its keys.
+  final String source;
+
+  /// The failure, such as `timeout`, `load`, `key-store`, or the hosted
+  /// page's own code.
+  final String code;
+
+  @override
+  String toString() => 'ConsentIQError($source: $code)';
+}
+
 typedef ConsentChangeCallback = void Function(
     ConsentState consent, MarketingConsentState marketingConsent);
 typedef ConsentAcceptCallback = void Function(ConsentAcceptEvent event);
 typedef ConsentRejectCallback = void Function(ConsentRejectEvent event);
 typedef ConsentSaveCallback = void Function(ConsentSaveEvent event);
+typedef ConsentErrorCallback = void Function(ConsentIQError error);
 
 const String defaultApiUrl = 'https://consent.iqworks.ai';
 
@@ -45,6 +61,7 @@ class ConsentIQConfig {
     this.onReject,
     this.onSave,
     this.onClose,
+    this.onError,
   });
 
   /// The property's public key from the ConsentIQ dashboard.
@@ -74,4 +91,8 @@ class ConsentIQConfig {
 
   /// Fires only when the visitor backs out of the sheet without answering.
   final void Function()? onClose;
+
+  /// Fires when the SDK hits a failure it recovers from, such as the IAB TCF
+  /// page failing to load, after which the consent sheet is used instead.
+  final ConsentErrorCallback? onError;
 }

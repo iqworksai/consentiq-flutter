@@ -1,7 +1,7 @@
 import 'package:flutter/widgets.dart';
 
-import 'captcha.dart';
 import 'consent_iq.dart';
+import 'web_view.dart';
 
 /// Exposes a [ConsentIQ] to the widget tree. Widgets that call [of] rebuild
 /// whenever the consent state changes.
@@ -17,7 +17,7 @@ class ConsentIQProvider extends InheritedNotifier<ConsentIQ> {
 
   // Wrapping here rather than in the initializer keeps the constructor const.
   @override
-  Widget get child => CaptchaHost(child: super.child);
+  Widget get child => HiddenWebViewHost(child: super.child);
 
   static ConsentIQ of(BuildContext context) {
     final consentIQ = maybeOf(context);

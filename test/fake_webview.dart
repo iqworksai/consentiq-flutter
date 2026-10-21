@@ -40,6 +40,10 @@ class FakeWebViewController extends PlatformWebViewController {
   FakeNavigationDelegate? delegate;
   final List<Uri> loads = [];
   final List<String> scripts = [];
+  final List<Color> backgrounds = [];
+
+  /// What `currentUrl()` reports; the last load when null.
+  String? pageUrl;
 
   @override
   Future<void> setJavaScriptMode(JavaScriptMode javaScriptMode) async =>
@@ -62,6 +66,13 @@ class FakeWebViewController extends PlatformWebViewController {
   @override
   Future<void> runJavaScript(String javaScript) async =>
       scripts.add(javaScript);
+
+  @override
+  Future<String?> currentUrl() async =>
+      pageUrl ?? (loads.isEmpty ? null : loads.last.toString());
+
+  @override
+  Future<void> setBackgroundColor(Color color) async => backgrounds.add(color);
 
   void post(Map<String, Object?> message) =>
       channels['ConsentIQFlutter']!.onMessageReceived(

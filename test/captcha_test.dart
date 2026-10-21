@@ -43,6 +43,33 @@ void main() {
       expect(await token, 't1');
     });
 
+    test('ignores messages unless the hosted captcha page sent them', () async {
+      final token = CaptchaController.forApiUrl(testApiUrl).token();
+      var settled = false;
+      token.then((_) => settled = true, onError: (Object _) {}).ignore();
+      await pumpEventQueue();
+      final web = platform.controllers.single;
+
+      web.pageUrl = 'https://evil.test/api/public/captcha/mobile';
+      web.post({'type': 'ready'});
+      await pumpEventQueue();
+      expect(web.scripts, isEmpty);
+
+      web.pageUrl = null;
+      web.post({'type': 'ready'});
+      await pumpEventQueue();
+      expect(web.scripts, ['window.consentiqExecute()']);
+
+      web.pageUrl = '$testApiUrl/api/public/tcf/mobile';
+      web.post({'type': 'token', 'token': 'forged'});
+      await pumpEventQueue();
+      expect(settled, isFalse);
+
+      web.pageUrl = null;
+      web.post({'type': 'token', 'token': 't1'});
+      expect(await token, 't1');
+    });
+
     test('one controller per API URL', () {
       expect(
         CaptchaController.forApiUrl(testApiUrl),

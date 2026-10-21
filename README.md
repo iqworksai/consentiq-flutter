@@ -100,6 +100,7 @@ State:
 - `marketingConsent`: `Map<String, bool>` of marketing channels.
 - `config`: the loaded `PropertyConfig`, or null before init completes.
 - `isLoading`, `isSheetVisible`, `language`, `regulation`, `subjectId`.
+- `isTcfActive`, `isTcfVisible`: see [IAB TCF](#iab-tcf).
 
 Operations:
 
@@ -109,7 +110,8 @@ Operations:
 - `rejectAll()`: only `necessary` on.
 - `updateConsent({...})`, `updateMarketingConsent({...})`: merge a partial update.
 - `savePreferences(fullMap)`: what the sheet's Save button calls.
-- `showSheet()`, `hideSheet()`, `dismissSheet()`.
+- `showSheet()`, `hideSheet()`, `dismissSheet()`. With [IAB TCF](#iab-tcf) active these act on the TCF page.
+- `showTcfPreferences()`: re-open the TCF page.
 - `resetConsent()`: clear the local cache and subject id and return to defaults.
 
 Every write updates local state first, then posts to ConsentIQ, then caches the result and calls `onConsentChange`. A failed post is logged and the local state is kept.
@@ -117,7 +119,7 @@ Every write updates local state first, then posts to ConsentIQ, then caches the 
 ### Widgets
 
 - `ConsentIQProvider(consentIQ:, child:)`: an `InheritedNotifier` that exposes the `ConsentIQ`. It also hosts the hidden web view for the [captcha](#captcha) check.
-- `ConsentSheet({child})`: presents the consent sheet as a modal bottom sheet whenever `isSheetVisible` is true. Must sit below a `Navigator`. Renders `child` in place.
+- `ConsentSheet({child})`: presents the consent sheet as a modal bottom sheet whenever `isSheetVisible` is true, and the TCF page full screen whenever `isTcfVisible` is. Must sit below a `Navigator`. Renders `child` in place.
 - `ConsentGate(category:, child:, placeholder:)`: renders `child` only while `hasConsent(category)` is true, otherwise `placeholder`.
 
 The sheet renders the property's title, description and button labels in the active language, links to the cookie notice, and lists each category with a switch. Languages such as Arabic lay out right-to-left.
@@ -153,6 +155,19 @@ All callbacks on `ConsentIQConfig` are optional.
 | `onReject(event)` | The visitor tapped Reject all. |
 | `onSave(event)` | The visitor saved a custom selection. |
 | `onClose()` | The visitor backed out with the back button, a swipe or a tap outside the sheet. Never fires on accept, reject, save or `hideSheet()`. |
+| `onError(error)` | The SDK recovered from a failure, such as the TCF page failing to load. `error.source` and `error.code` say what failed. |
+
+## IAB TCF
+
+When "Use IAB TCF on this property" is on in the dashboard, the SDK follows the IAB Transparency and Consent Framework for visitors GDPR applies to. There is nothing to configure in the app.
+
+- At start-up the SDK loads ConsentIQ's TCF page in a hidden web view. If the visitor has a current decision, nothing is shown. Otherwise `ConsentSheet` presents the page full screen in place of the consent sheet. Keep a `ConsentSheet` mounted, as Quick start already asks.
+- The decision is written to the `IABTCF_*` keys that IAB vendors' SDKs read: Android's default SharedPreferences and iOS `UserDefaults.standard`. Its category choices update `consent` and fire `onAccept`, `onReject` or `onSave`, as the visitor chose, and `onConsentChange`. The page records the consent with ConsentIQ itself.
+- `showSheet()` re-opens the page, as does `showTcfPreferences()`. A re-opened page can be closed, with Android's back button too; a first prompt needs an answer.
+- `resetConsent()` and an expired consent remove the decision keys this SDK wrote. If TCF is turned off for the property, the SDK removes every key it wrote at the next start. Keys written by another CMP are never touched.
+- When GDPR does not apply, `IABTCF_gdprApplies` is set to 0 and the consent sheet is used as usual. If the page fails to load, `onError` fires and the consent sheet is used.
+
+The SDK is a Flutter plugin for this reason: its Android and iOS code writes the keys, which `shared_preferences` cannot write in the form vendors read.
 
 ## Captcha
 
