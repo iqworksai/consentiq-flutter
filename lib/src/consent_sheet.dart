@@ -41,6 +41,57 @@ Color parseHexColor(String? hex, [Color fallback = defaultPrimaryColor]) {
   return parsed == null ? fallback : Color(0xFF000000 | parsed);
 }
 
+final RegExp _hexColor = RegExp(r'^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$');
+
+/// A `#rgb` or `#rrggbb` color, or null for anything else.
+Color? tryParseHexColor(String? hex) {
+  final value = hex?.trim();
+  if (value == null || !_hexColor.hasMatch(value)) return null;
+  return parseHexColor(value);
+}
+
+/// The repo-wide light/dark rule: YIQ brightness of the 0-255 channels,
+/// light at 150 and above. Null for anything but `#rgb` or `#rrggbb`.
+bool? isLightHex(String? hex) {
+  var value = hex?.trim();
+  if (value == null || !_hexColor.hasMatch(value)) return null;
+  value = value.substring(1);
+  if (value.length == 3) value = value.split('').map((c) => '$c$c').join();
+  int channel(int i) => int.parse(value!.substring(i, i + 2), radix: 16);
+  final yiq = (channel(0) * 299 + channel(2) * 587 + channel(4) * 114) / 1000;
+  return yiq >= 150;
+}
+
+/// The sheet colors the dashboard set, or null to keep the app's theme.
+class SheetColors {
+  const SheetColors({
+    this.background,
+    required this.text,
+    required this.secondaryText,
+  });
+
+  /// Null when only a text color was set.
+  final Color? background;
+  final Color text;
+  final Color secondaryText;
+
+  static SheetColors? of(BannerConfig banner, ThemeData theme) {
+    final background = tryParseHexColor(banner.bannerBgColor);
+    final text = tryParseHexColor(banner.bannerTextColor);
+    if (background == null && text == null) return null;
+    final dark = background == null
+        ? theme.brightness == Brightness.dark
+        : isLightHex(banner.bannerBgColor) == false;
+    return SheetColors(
+      background: background,
+      text: text ?? (dark ? Colors.white : const Color(0xFF111827)),
+      secondaryText: background == null
+          ? theme.colorScheme.onSurfaceVariant
+          : (dark ? const Color(0xFFD1D5DB) : const Color(0xFF4B5563)),
+    );
+  }
+}
+
 /// Route changes are illegal mid-frame, so defer them when a frame is building.
 void runOutsideBuild(VoidCallback action) {
   final phase = SchedulerBinding.instance.schedulerPhase;
@@ -139,6 +190,9 @@ class _ConsentSheetState extends State<ConsentSheet> {
         isScrollControlled: true,
         useSafeArea: true,
         showDragHandle: true,
+        backgroundColor: tryParseHexColor(
+          consentIQ.config?.banner.bannerBgColor,
+        ),
         builder: (_) => _ConsentSheetBody(consentIQ: consentIQ),
       );
     } on FlutterError catch (e) {
@@ -334,10 +388,22 @@ class _ConsentSheetBodyState extends State<_ConsentSheetBody> {
     final shape = RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(radius),
     );
-    final theme = Theme.of(context);
+    final appTheme = Theme.of(context);
+    final colors = SheetColors.of(config.banner, appTheme);
+    final theme = colors == null
+        ? appTheme
+        : appTheme.copyWith(
+            textTheme: appTheme.textTheme.apply(
+              bodyColor: colors.text,
+              displayColor: colors.text,
+            ),
+          );
     final scheme = theme.colorScheme.copyWith(
       primary: primary,
       onPrimary: Colors.white,
+      surface: colors?.background,
+      onSurface: colors?.text,
+      onSurfaceVariant: colors?.secondaryText,
     );
 
     return Directionality(

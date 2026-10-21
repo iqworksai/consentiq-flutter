@@ -1,5 +1,6 @@
 ## Unreleased
 
+- `ConsentSheet` uses the banner's background and text colors from the dashboard when the server sends them (new optional `BannerConfig.bannerBgColor` and `bannerTextColor`), with secondary text matched to a light or dark background. Without them, it follows the app's theme.
 - IAB TCF in-app support. When a property has TCF on and GDPR applies to the visitor, the SDK shows ConsentIQ's hosted TCF page full screen in place of the consent sheet, and writes the `IABTCF_*` keys where IAB vendors' SDKs read them: Android's default SharedPreferences and iOS `UserDefaults.standard`. The page records the consent itself; its category choices update `consent` and fire `onAccept`, `onReject` or `onSave`, as the visitor chose, and `onConsentChange`.
 - The SDK removes the `IABTCF_*` keys it wrote when consent is reset or expires, and all of them when the property no longer runs TCF. Keys written by another CMP are never touched.
 - `showSheet()` opens the TCF page when TCF is active, and `showTcfPreferences()` opens it explicitly. New state: `isTcfActive`, `isTcfVisible`.

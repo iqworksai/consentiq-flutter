@@ -13,6 +13,8 @@ Map<String, dynamic> configJson({
   String? defaultLanguage = 'en',
   String? noticeUrl = 'https://consent.example.test/api/public/privacy/pk',
   String? primaryColor = '#123456',
+  String? bannerBgColor,
+  String? bannerTextColor,
   String? bannerDescription = 'We use cookies to improve your experience.',
   Map<String, dynamic>? tcf,
 }) =>
@@ -31,6 +33,8 @@ Map<String, dynamic> configJson({
         'theme': 'dark',
         'showLogo': false,
         'primaryColor': primaryColor,
+        if (bannerBgColor != null) 'bannerBgColor': bannerBgColor,
+        if (bannerTextColor != null) 'bannerTextColor': bannerTextColor,
         'cornerStyle': 'rounded',
         'showCookieIcon': false,
         'overlay': false,

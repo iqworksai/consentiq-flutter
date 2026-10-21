@@ -1,4 +1,6 @@
 import 'package:consentiq/consentiq.dart';
+import 'package:consentiq/src/consent_sheet.dart'
+    show isLightHex, tryParseHexColor;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -67,7 +69,117 @@ void main() {
     });
   });
 
+  group('banner colors', () {
+    test('parses tolerantly and accepts only #rgb or #rrggbb', () {
+      final banner = PropertyConfig.fromJson(configJson(
+        bannerBgColor: '#0f172a',
+        bannerTextColor: '#fff',
+      )).banner;
+      expect(banner.bannerBgColor, '#0f172a');
+      expect(banner.bannerTextColor, '#fff');
+      final old = PropertyConfig.fromJson(configJson()).banner;
+      expect(old.bannerBgColor, isNull);
+      expect(
+        BannerConfig.fromJson(
+            {'bannerBgColor': 12, 'bannerTextColor': <Object>[]}).bannerBgColor,
+        isNull,
+      );
+
+      expect(tryParseHexColor('#0f172a'), const Color(0xFF0F172A));
+      expect(tryParseHexColor(' #FFF '), const Color(0xFFFFFFFF));
+      for (final bad in [
+        null,
+        '',
+        'red',
+        '0f172a',
+        '#12345',
+        '#ggg',
+        '#1234'
+      ]) {
+        expect(tryParseHexColor(bad), isNull, reason: bad);
+        expect(isLightHex(bad), isNull, reason: bad);
+      }
+    });
+
+    test('light or dark by YIQ brightness, light at 150', () {
+      expect(isLightHex('#fff'), isTrue);
+      expect(isLightHex('#000000'), isFalse);
+      // YIQ 150 exactly, and just below it.
+      expect(isLightHex('#969696'), isTrue);
+      expect(isLightHex('#959595'), isFalse);
+      // Pure green is 149.7, so dark; yellow is 225.9.
+      expect(isLightHex('#00ff00'), isFalse);
+      expect(isLightHex('#ffff00'), isTrue);
+      expect(isLightHex('#ff0000'), isFalse);
+      expect(isLightHex('#e11d48'), isFalse);
+    });
+  });
+
   group('ConsentSheet', () {
+    Color? colorOf(WidgetTester tester, String text) =>
+        tester.widget<Text>(find.text(text)).style?.color;
+
+    testWidgets('uses the dashboard background and text colors',
+        (tester) async {
+      await pumpApp(
+        tester,
+        server: FakeServer(
+          config: configJson(
+            bannerBgColor: '#0f172a',
+            bannerTextColor: '#fafafa',
+          ),
+        ),
+      );
+
+      expect(
+        tester.widget<BottomSheet>(find.byType(BottomSheet)).backgroundColor,
+        const Color(0xFF0F172A),
+      );
+      expect(colorOf(tester, 'We value your privacy'), const Color(0xFFFAFAFA));
+      expect(
+        colorOf(tester, 'We use cookies to improve your experience.'),
+        const Color(0xFFD1D5DB),
+      );
+    });
+
+    testWidgets('secondary and default text follow a light background',
+        (tester) async {
+      await pumpApp(
+        tester,
+        server: FakeServer(config: configJson(bannerBgColor: '#fff')),
+      );
+
+      expect(
+        tester.widget<BottomSheet>(find.byType(BottomSheet)).backgroundColor,
+        const Color(0xFFFFFFFF),
+      );
+      expect(colorOf(tester, 'We value your privacy'), const Color(0xFF111827));
+      expect(
+        colorOf(tester, 'We use cookies to improve your experience.'),
+        const Color(0xFF4B5563),
+      );
+    });
+
+    testWidgets('absent or invalid colors keep the app theme', (tester) async {
+      await pumpApp(tester);
+      final sheet = tester.widget<BottomSheet>(find.byType(BottomSheet));
+      final title = colorOf(tester, 'We value your privacy');
+      expect(sheet.backgroundColor, isNot(const Color(0xFF0F172A)));
+
+      await tester.pumpWidget(const SizedBox());
+      await pumpApp(
+        tester,
+        server: FakeServer(
+          config: configJson(bannerBgColor: 'navy', bannerTextColor: '#12345'),
+        ),
+      );
+      expect(
+        tester.widget<BottomSheet>(find.byType(BottomSheet)).backgroundColor,
+        sheet.backgroundColor,
+      );
+      expect(colorOf(tester, 'We value your privacy'), title);
+    });
+
     testWidgets('renders labels, blurb and notice link from config',
         (tester) async {
       await pumpApp(tester);

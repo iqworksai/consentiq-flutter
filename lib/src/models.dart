@@ -43,6 +43,8 @@ class BannerConfig {
     this.cookieIconUrl,
     this.overlay = false,
     this.noticeUrl,
+    this.bannerBgColor,
+    this.bannerTextColor,
   });
 
   factory BannerConfig.fromJson(Map<String, dynamic> json) => BannerConfig(
@@ -57,6 +59,8 @@ class BannerConfig {
         cookieIconUrl: asStringOrNull(json['cookieIconUrl']),
         overlay: asBool(json['overlay']),
         noticeUrl: asStringOrNull(json['noticeUrl']),
+        bannerBgColor: asStringOrNull(json['bannerBgColor']),
+        bannerTextColor: asStringOrNull(json['bannerTextColor']),
       );
 
   final String position;
@@ -76,6 +80,11 @@ class BannerConfig {
 
   /// Absolute URL of the cookie notice this banner is bound to.
   final String? noticeUrl;
+
+  /// Hex background and text colors set in the dashboard editor. Older
+  /// servers send neither.
+  final String? bannerBgColor;
+  final String? bannerTextColor;
 }
 
 class CategoryInfo {
