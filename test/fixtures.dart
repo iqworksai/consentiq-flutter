@@ -202,7 +202,9 @@ class FakeServer {
     int consentStatus = 200,
     int submitStatus = 200,
     Map<String, dynamic>? submitBody,
-  })  : _config = config ?? configJson(),
+    List<int>? submitStatuses,
+  })  : _submitStatuses = submitStatuses,
+        _config = config ?? configJson(),
         _consent = consent ?? const {'consent': null},
         _configStatus = configStatus,
         _consentStatus = consentStatus,
@@ -216,6 +218,8 @@ class FakeServer {
   final int _consentStatus;
   final int _submitStatus;
   final Map<String, dynamic> _submitBody;
+  // Answers each submit in turn; the last status repeats.
+  final List<int>? _submitStatuses;
   final List<RecordedRequest> requests = [];
 
   List<RecordedRequest> get submits =>
@@ -228,6 +232,14 @@ class FakeServer {
           return jsonResponse(_config, _configStatus);
         }
         if (path == '/api/public/consent' && request.method == 'POST') {
+          final statuses = _submitStatuses;
+          if (statuses != null) {
+            final status = statuses[
+                (submits.length - 1).clamp(0, statuses.length - 1).toInt()];
+            return status == 428
+                ? jsonResponse(const {'error': 'captcha_required'}, 428)
+                : jsonResponse(_submitBody, status);
+          }
           return jsonResponse(_submitBody, _submitStatus);
         }
         if (path.startsWith('/api/public/consent/')) {

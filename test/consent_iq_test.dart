@@ -470,6 +470,95 @@ void main() {
       expect(logs, ['[ConsentIQ] Captcha check failed; consent not submitted']);
     });
 
+    test('a 428 captcha_required is answered once and the consent recorded',
+        () async {
+      final server = FakeServer(submitStatuses: [428, 200]);
+      final captcha = FakeCaptcha();
+      var changes = 0;
+      final consentIQ = build(
+        server,
+        options: ConsentIQConfig(
+          propertyKey: testPropertyKey,
+          onConsentChange: (_, __) => changes++,
+        ),
+        captcha: captcha,
+      );
+      await consentIQ.init();
+
+      await consentIQ.acceptAll();
+
+      expect(server.submits, hasLength(2));
+      expect(server.submits[0].json.containsKey('captchaToken'), isFalse);
+      expect(server.submits[1].json['captchaToken'], 'tok');
+      expect(captcha.calls, 1);
+      expect(changes, 1);
+      expect(await cachedConsent(), isNotNull);
+    });
+
+    test('a challenge is retried once only', () async {
+      final server = FakeServer(submitStatuses: [428]);
+      final captcha = FakeCaptcha();
+      final consentIQ = build(server, captcha: captcha);
+      await consentIQ.init();
+
+      await captureLogs(consentIQ.acceptAll);
+
+      expect(server.submits, hasLength(2));
+      expect(captcha.calls, 1);
+      expect(await cachedConsent(), isNull);
+    });
+
+    test('a cancelled challenge sends nothing more and keeps local state',
+        () async {
+      final server = FakeServer(submitStatuses: [428]);
+      final consentIQ = build(server, captcha: FakeCaptcha(null));
+      await consentIQ.init();
+
+      final logs = await captureLogs(consentIQ.acceptAll);
+
+      expect(server.submits, hasLength(1));
+      expect(consentIQ.hasConsent('analytics'), isTrue);
+      expect(await cachedConsent(), isNull);
+      expect(logs, ['[ConsentIQ] Captcha check failed; consent not submitted']);
+    });
+
+    test('another refusal is not a challenge', () async {
+      final server = FakeServer(submitStatus: 403);
+      final captcha = FakeCaptcha();
+      final consentIQ = build(server, captcha: captcha);
+      await consentIQ.init();
+
+      await captureLogs(consentIQ.acceptAll);
+
+      expect(server.submits, hasLength(1));
+      expect(captcha.calls, 0);
+    });
+
+    test('the identity token goes with every submit, and only when given',
+        () async {
+      final server = FakeServer();
+      final consentIQ = build(
+        server,
+        options: const ConsentIQConfig(
+          propertyKey: testPropertyKey,
+          identityToken: 'v2.1700000000.abc',
+        ),
+      );
+      await consentIQ.init();
+      await consentIQ.acceptAll();
+      await consentIQ.rejectAll();
+      expect(
+        server.submits.map((r) => r.json['identityToken']),
+        ['v2.1700000000.abc', 'v2.1700000000.abc'],
+      );
+
+      final plain = FakeServer();
+      final without = build(plain);
+      await without.init();
+      await without.acceptAll();
+      expect(plain.submits.single.json.containsKey('identityToken'), isFalse);
+    });
+
     test('no captcha required: token source unused, no captchaToken key',
         () async {
       for (final config in [

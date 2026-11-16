@@ -55,6 +55,7 @@ class ConsentIQConfig {
     this.language,
     this.autoShow = true,
     this.debug = false,
+    this.identityToken,
     this.onConsentChange,
     this.onOpen,
     this.onAccept,
@@ -79,6 +80,11 @@ class ConsentIQConfig {
   /// Show the sheet on init when no consent has been recorded.
   final bool autoShow;
   final bool debug;
+
+  /// Your server's signature for this person, sent with every submission
+  /// unread. ConsentIQ verifies it and marks the record verified by your
+  /// organization. Sign it on your server, never in the app.
+  final String? identityToken;
 
   /// Fires after every recorded write.
   final ConsentChangeCallback? onConsentChange;

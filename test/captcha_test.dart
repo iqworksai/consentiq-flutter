@@ -10,7 +10,8 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'fake_webview.dart';
 import 'fixtures.dart';
 
-final Uri pageUrl = Uri.parse('$testApiUrl/api/public/captcha/mobile');
+final Uri pageUrl =
+    Uri.parse('$testApiUrl/api/public/captcha/mobile?key=$testPropertyKey');
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -26,7 +27,8 @@ void main() {
   group('CaptchaController', () {
     test('loads the page, waits for ready, executes and returns the token',
         () async {
-      final token = CaptchaController.forApiUrl(testApiUrl).token();
+      final token =
+          CaptchaController.forProperty(testApiUrl, testPropertyKey).token();
       await pumpEventQueue();
 
       final web = platform.controllers.single;
@@ -44,7 +46,8 @@ void main() {
     });
 
     test('ignores messages unless the hosted captcha page sent them', () async {
-      final token = CaptchaController.forApiUrl(testApiUrl).token();
+      final token =
+          CaptchaController.forProperty(testApiUrl, testPropertyKey).token();
       var settled = false;
       token.then((_) => settled = true, onError: (Object _) {}).ignore();
       await pumpEventQueue();
@@ -70,20 +73,30 @@ void main() {
       expect(await token, 't1');
     });
 
-    test('one controller per API URL', () {
+    test('one controller per API URL and property', () {
+      final controller = CaptchaController.forProperty(testApiUrl, 'pk');
+      expect(controller, same(CaptchaController.forProperty(testApiUrl, 'pk')));
       expect(
-        CaptchaController.forApiUrl(testApiUrl),
-        same(CaptchaController.forApiUrl(testApiUrl)),
+        controller,
+        isNot(same(CaptchaController.forProperty('https://other.test', 'pk'))),
       );
       expect(
-        CaptchaController.forApiUrl(testApiUrl),
-        isNot(same(CaptchaController.forApiUrl('https://other.test'))),
+        controller,
+        isNot(same(CaptchaController.forProperty(testApiUrl, 'pk_other'))),
+      );
+    });
+
+    test('the page names the property, so its tokens are bound to it', () {
+      expect(
+        captchaPageUrl(testApiUrl, 'a b&c').toString(),
+        '$testApiUrl/api/public/captcha/mobile?key=a+b%26c',
       );
     });
 
     test('requests run one at a time, a fresh execute each, page reused',
         () async {
-      final controller = CaptchaController.forApiUrl(testApiUrl);
+      final controller =
+          CaptchaController.forProperty(testApiUrl, testPropertyKey);
       final first = controller.token();
       final second = controller.token();
       await pumpEventQueue();
@@ -103,7 +116,8 @@ void main() {
     });
 
     test('a loaded page serves the first request without reloading', () async {
-      final controller = CaptchaController.forApiUrl(testApiUrl);
+      final controller =
+          CaptchaController.forProperty(testApiUrl, testPropertyKey);
       controller.loadPage();
       controller.loadPage();
       await pumpEventQueue();
@@ -121,7 +135,8 @@ void main() {
 
     test('an error message fails the request and the next one reloads',
         () async {
-      final controller = CaptchaController.forApiUrl(testApiUrl);
+      final controller =
+          CaptchaController.forProperty(testApiUrl, testPropertyKey);
       final failed = controller.token();
       await pumpEventQueue();
       final web = platform.controllers.single;
@@ -142,7 +157,8 @@ void main() {
 
     test('a main-frame load error fails the request; a subframe one does not',
         () async {
-      final controller = CaptchaController.forApiUrl(testApiUrl);
+      final controller =
+          CaptchaController.forProperty(testApiUrl, testPropertyKey);
       final token = controller.token();
       await pumpEventQueue();
       final delegate = platform.controllers.single.delegate!;
@@ -164,7 +180,8 @@ void main() {
     });
 
     test('an HTTP error on the page itself fails the request', () async {
-      final controller = CaptchaController.forApiUrl(testApiUrl);
+      final controller =
+          CaptchaController.forProperty(testApiUrl, testPropertyKey);
       final token = controller.token();
       await pumpEventQueue();
 
@@ -178,7 +195,8 @@ void main() {
 
     test('navigation: the page in the main frame, Turnstile in subframes',
         () async {
-      final controller = CaptchaController.forApiUrl(testApiUrl);
+      final controller =
+          CaptchaController.forProperty(testApiUrl, testPropertyKey);
       controller.loadPage();
       await pumpEventQueue();
       final decide = platform.controllers.single.delegate!.onNavigationRequest!;
@@ -187,7 +205,9 @@ void main() {
 
       expect(await check(pageUrl.toString()), NavigationDecision.navigate);
       for (final url in [
-        '$pageUrl?next=1',
+        '$pageUrl&next=1',
+        '$testApiUrl/api/public/captcha/mobile',
+        '$testApiUrl/api/public/captcha/mobile?key=other',
         '$testApiUrl/',
         'https://evil.test/',
         'https://challenges.cloudflare.com/turnstile/v0/api.js',
@@ -215,7 +235,8 @@ void main() {
 
     testWidgets('times out after 15 s and warns once with no provider',
         (tester) async {
-      final controller = CaptchaController.forApiUrl(testApiUrl);
+      final controller =
+          CaptchaController.forProperty(testApiUrl, testPropertyKey);
       final errors = <Object>[];
       final logs = await captureLogs(() async {
         for (var i = 0; i < 2; i++) {
@@ -242,7 +263,7 @@ void main() {
       ));
       final errors = <Object>[];
       final logs = await captureLogs(() async {
-        unawaited(CaptchaController.forApiUrl(testApiUrl)
+        unawaited(CaptchaController.forProperty(testApiUrl, testPropertyKey)
             .token()
             .then((_) {}, onError: errors.add));
         await tester.pump(const Duration(seconds: 15));
@@ -250,6 +271,90 @@ void main() {
 
       expect(errors, hasLength(1));
       expect(logs, isEmpty);
+    });
+  });
+
+  group('a challenge the visitor must answer', () {
+    Future<FakeWebViewController> startChallenge(
+      WidgetTester tester,
+      List<Object> results,
+    ) async {
+      await tester.pumpWidget(ConsentIQProvider(
+        consentIQ: ConsentIQ(const ConsentIQConfig(propertyKey: 'pk')),
+        child: const SizedBox(),
+      ));
+      unawaited(CaptchaController.forProperty(testApiUrl, testPropertyKey)
+          .token()
+          .then(results.add, onError: results.add));
+      await tester.pump();
+      final web = platform.controllers.single;
+      web.post({'type': 'ready'});
+      await tester.pump();
+      await tester.pump();
+      return web;
+    }
+
+    final cancel = find.byKey(const ValueKey('consentiq-captcha-cancel'));
+
+    testWidgets('a token within 3 s never shows the challenge', (tester) async {
+      final results = <Object>[];
+      final web = await startChallenge(tester, results);
+      await tester.pump(const Duration(seconds: 2));
+      web.post({'type': 'token', 'token': 't1'});
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 5));
+
+      expect(results, ['t1']);
+      expect(cancel, findsNothing);
+    });
+
+    testWidgets('after 3 s it is shown, and Cancel gives up on it',
+        (tester) async {
+      final results = <Object>[];
+      await startChallenge(tester, results);
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump();
+
+      expect(cancel, findsOneWidget);
+      expect(tester.getSize(find.byKey(fakeWebViewKey)).width, greaterThan(1));
+
+      await tester.tap(cancel);
+      await tester.pump();
+      await tester.pump();
+
+      expect(results.single, isA<CaptchaException>());
+      expect((results.single as CaptchaException).code, 'cancelled');
+      expect(cancel, findsNothing);
+    });
+
+    testWidgets('an interactive message shows it at once', (tester) async {
+      final results = <Object>[];
+      final web = await startChallenge(tester, results);
+      web.post({'type': 'interactive'});
+      await tester.pump();
+      await tester.pump();
+
+      expect(cancel, findsOneWidget);
+      web.post({'type': 'token', 'token': 't2'});
+      await tester.pump();
+      await tester.pump();
+      expect(results, ['t2']);
+      expect(cancel, findsNothing);
+    });
+
+    testWidgets('once shown it waits up to 2 minutes, then times out',
+        (tester) async {
+      final results = <Object>[];
+      await startChallenge(tester, results);
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump(const Duration(seconds: 60));
+      expect(results, isEmpty);
+
+      await tester.pump(const Duration(seconds: 61));
+      await tester.pump();
+      expect(results.single, isA<CaptchaException>());
+      expect((results.single as CaptchaException).code, 'timeout');
+      expect(cancel, findsNothing);
     });
   });
 
@@ -374,7 +479,7 @@ void main() {
       final before = tester.state(find.byType(_Probe));
       expect(find.byKey(fakeWebViewKey), findsNothing);
 
-      CaptchaController.forApiUrl(testApiUrl).loadPage();
+      CaptchaController.forProperty(testApiUrl, testPropertyKey).loadPage();
       await tester.pump();
       await tester.pump();
 

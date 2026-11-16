@@ -78,6 +78,7 @@ class ConsentIQApiClient {
     String consentMethod = 'sdk',
     String? consentVersion,
     String? captchaToken,
+    String? identityToken,
   }) async {
     final body = <String, Object?>{
       'propertyKey': propertyKey,
@@ -91,6 +92,7 @@ class ConsentIQApiClient {
       'consentMethod': consentMethod,
       if (consentVersion != null) 'consentVersion': consentVersion,
       if (captchaToken != null) 'captchaToken': captchaToken,
+      if (identityToken != null) 'identityToken': identityToken,
     };
     _logger.log('Submitting consent ($consentMethod)');
     final json = await _post('/api/public/consent', body);

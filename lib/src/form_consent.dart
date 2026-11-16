@@ -34,6 +34,7 @@ class FormConsent extends ChangeNotifier {
     this.onConsentChange,
     ConsentIQApiClient? apiClient,
     CaptchaTokenSource? captchaTokenSource,
+    this.identityToken,
     bool debug = false,
   })  : _api = apiClient ??
             ConsentIQApiClient(
@@ -48,6 +49,9 @@ class FormConsent extends ChangeNotifier {
   }
 
   final String subjectId;
+
+  /// Your server's signature for this person, sent with the form unread.
+  final String? identityToken;
 
   /// `visitor`, `user` or `subscriber`.
   final String subjectType;
@@ -84,22 +88,28 @@ class FormConsent extends ChangeNotifier {
     _isSubmitting = true;
     notifyListeners();
     try {
+      final tokenSource = _captchaTokenSource ??
+          CaptchaController.forProperty(_api.apiUrl, _api.propertyKey).token;
       String? captchaToken;
       if (await _requiresCaptcha()) {
         try {
-          captchaToken = await (_captchaTokenSource ??
-              CaptchaController.forApiUrl(_api.apiUrl).token)();
+          captchaToken = await tokenSource();
         } catch (_) {
           _logger.warn(captchaFailedWarning);
           return null;
         }
       }
-      final submission = await _api.submitConsent(
-        subjectId: subjectId,
-        subjectType: subjectType,
-        marketingConsents: Map.of(_consents),
-        consentMethod: 'form',
-        captchaToken: captchaToken,
+      final submission = await submitAnsweringChallenge(
+        firstToken: captchaToken,
+        tokenSource: tokenSource,
+        send: (token) => _api.submitConsent(
+          subjectId: subjectId,
+          subjectType: subjectType,
+          marketingConsents: Map.of(_consents),
+          consentMethod: 'form',
+          captchaToken: token,
+          identityToken: identityToken,
+        ),
       );
       final result = FormConsentResult(
         submission: submission,
@@ -107,6 +117,9 @@ class FormConsent extends ChangeNotifier {
       );
       onConsentSubmitted?.call(result);
       return result;
+    } on CaptchaException {
+      _logger.warn(captchaFailedWarning);
+      return null;
     } catch (e) {
       _logger.warn('Failed to submit form consent', e);
       return null;

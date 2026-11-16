@@ -309,29 +309,37 @@ class ConsentIQ extends ChangeNotifier {
     final cookieConsents = Map<String, bool>.of(_consent);
     final marketingConsents = Map<String, bool>.of(_marketingConsent);
     final config = _config;
+    final tokenSource = _captchaTokenSource ??
+        CaptchaController.forProperty(_api.apiUrl, options.propertyKey).token;
     String? captchaToken;
     if (config != null && requiresCaptcha(config)) {
       try {
-        captchaToken = await (_captchaTokenSource ??
-            CaptchaController.forApiUrl(_api.apiUrl).token)();
+        captchaToken = await tokenSource();
       } catch (_) {
         _logger.warn(captchaFailedWarning);
         return;
       }
     }
     try {
-      await _api.submitConsent(
-        subjectId: sid,
-        cookieConsents: cookieConsents,
-        marketingConsents: marketingConsents,
-        consentMethod: 'sdk',
-        captchaToken: captchaToken,
+      await submitAnsweringChallenge(
+        firstToken: captchaToken,
+        tokenSource: tokenSource,
+        send: (token) => _api.submitConsent(
+          subjectId: sid,
+          cookieConsents: cookieConsents,
+          marketingConsents: marketingConsents,
+          consentMethod: 'sdk',
+          captchaToken: token,
+          identityToken: options.identityToken,
+        ),
       );
       await _storage.saveConsent(cookieConsents);
       options.onConsentChange?.call(
         Map.unmodifiable(cookieConsents),
         Map.unmodifiable(marketingConsents),
       );
+    } on CaptchaException {
+      _logger.warn(captchaFailedWarning);
     } catch (e) {
       _logger.warn('Failed to submit consent', e);
     }

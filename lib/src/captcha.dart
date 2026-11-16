@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/widgets.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import 'api_client.dart';
 import 'json.dart';
 import 'log.dart';
 import 'models.dart';
@@ -20,6 +21,48 @@ const String captchaPagePath = '/api/public/captcha/mobile';
 const String captchaChannel = webViewChannel;
 const Duration captchaTimeout = Duration(seconds: 15);
 
+/// Turnstile signals nothing when it wants a click, so a token this late is
+/// taken to need one, and the challenge is shown.
+const Duration captchaRevealDelay = Duration(seconds: 3);
+const Duration captchaInteractionTimeout = Duration(minutes: 2);
+
+/// The captcha page for [propertyKey]; the key binds each token to the
+/// property, so it cannot be spent on another one.
+Uri captchaPageUrl(String apiUrl, String propertyKey) =>
+    Uri.parse('$apiUrl$captchaPagePath')
+        .replace(queryParameters: {'key': propertyKey});
+
+/// ConsentIQ asks for a captcha when a submission looks automated, whatever
+/// the property's setting.
+bool isCaptchaRequired(Object error) =>
+    error is ConsentIQApiException &&
+    error.statusCode == 428 &&
+    error.message == 'captcha_required';
+
+/// Sends a submission and, when the server answers 428 captcha_required,
+/// solves one challenge and sends it once more. Throws [CaptchaException]
+/// when that challenge fails; nothing more is sent.
+Future<T> submitAnsweringChallenge<T>({
+  required String? firstToken,
+  required CaptchaTokenSource tokenSource,
+  required Future<T> Function(String? captchaToken) send,
+}) async {
+  try {
+    return await send(firstToken);
+  } catch (e) {
+    if (!isCaptchaRequired(e)) rethrow;
+  }
+  final String token;
+  try {
+    token = await tokenSource();
+  } on CaptchaException {
+    rethrow;
+  } catch (_) {
+    throw const CaptchaException('failed');
+  }
+  return send(token);
+}
+
 bool requiresCaptcha(PropertyConfig config) =>
     config.requireCaptcha && config.turnstileSiteKey != null;
 
@@ -35,19 +78,20 @@ class CaptchaException implements Exception {
 /// Runs the hosted Turnstile page in a hidden web view that a
 /// [HiddenWebViewHost] displays. One per API URL for the process, shared by every caller.
 class CaptchaController {
-  CaptchaController._(String apiUrl)
-      : pageUrl = Uri.parse('$apiUrl$captchaPagePath');
+  CaptchaController._(this.pageUrl);
 
-  static final Map<String, CaptchaController> _byApiUrl = {};
+  static final Map<Uri, CaptchaController> _byPage = {};
   static HiddenWebViews get _registry => HiddenWebViews.instance;
   static bool _warnedNoHost = false;
 
-  static CaptchaController forApiUrl(String apiUrl) =>
-      _byApiUrl.putIfAbsent(apiUrl, () => CaptchaController._(apiUrl));
+  static CaptchaController forProperty(String apiUrl, String propertyKey) {
+    final page = captchaPageUrl(apiUrl, propertyKey);
+    return _byPage.putIfAbsent(page, () => CaptchaController._(page));
+  }
 
   @visibleForTesting
   static void resetForTesting() {
-    _byApiUrl.clear();
+    _byPage.clear();
     _registry.clear();
     _warnedNoHost = false;
   }
@@ -72,24 +116,70 @@ class CaptchaController {
   }
 
   Future<String> _request() async {
+    final done = Completer<String>()..future.ignore();
+    void fail(Object error) {
+      if (!done.isCompleted) done.completeError(error);
+    }
+
+    Timer? reveal;
+    var timeout =
+        Timer(captchaTimeout, () => fail(const CaptchaException('timeout')));
+    _revealNow = () {
+      if (_revealed || done.isCompleted) return;
+      final webView = _webView;
+      if (webView == null) return;
+      _revealed = true;
+      timeout.cancel();
+      timeout = Timer(
+        captchaInteractionTimeout,
+        () => fail(const CaptchaException('timeout')),
+      );
+      _registry.reveal(
+        webView,
+        onCancel: () => fail(const CaptchaException('cancelled')),
+      );
+    };
+    unawaited(_obtain(
+      onExecuted: () =>
+          reveal = Timer(captchaRevealDelay, () => _revealNow?.call()),
+    ).then(
+      (token) {
+        if (!done.isCompleted) done.complete(token);
+      },
+      onError: fail,
+    ));
     try {
-      return await _obtain().timeout(captchaTimeout);
+      return await done.future;
     } catch (e) {
+      final timedOut = e is CaptchaException && e.code == 'timeout';
       _reset('failed');
-      if (e is TimeoutException && _registry.hosts.isEmpty && !_warnedNoHost) {
+      if (timedOut && _registry.hosts.isEmpty && !_warnedNoHost) {
         _warnedNoHost = true;
         const ConsentIQLogger().warn(captchaNoHostWarning);
       }
       throw e is CaptchaException ? e : const CaptchaException('timeout');
+    } finally {
+      reveal?.cancel();
+      timeout.cancel();
+      _revealNow = null;
+      if (_revealed) {
+        _revealed = false;
+        final webView = _webView;
+        if (webView != null) _registry.conceal(webView);
+      }
     }
   }
 
-  Future<String> _obtain() async {
+  void Function()? _revealNow;
+  bool _revealed = false;
+
+  Future<String> _obtain({required void Function() onExecuted}) async {
     final ready = _ensureLoaded();
     await ready.future;
     if (!identical(ready, _ready)) throw const CaptchaException('reset');
     final token = _token = Completer<String>()..future.ignore();
     await _webView!.runJavaScript('window.consentiqExecute()');
+    onExecuted();
     return token.future;
   }
 
@@ -149,6 +239,8 @@ class CaptchaController {
       case 'ready':
         final ready = _ready;
         if (ready != null && !ready.isCompleted) ready.complete();
+      case 'interactive':
+        if (_token != null) _revealNow?.call();
       case 'token':
         final value = asStringOrNull(data['token']);
         final token = _token;

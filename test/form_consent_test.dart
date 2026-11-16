@@ -3,8 +3,14 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'fixtures.dart';
 
-FormConsent buildForm(FakeServer server, {FakeCaptcha? captcha}) => FormConsent(
+FormConsent buildForm(
+  FakeServer server, {
+  FakeCaptcha? captcha,
+  String? identityToken,
+}) =>
+    FormConsent(
       propertyKey: testPropertyKey,
+      identityToken: identityToken,
       subjectId: 'user-7',
       apiClient: ConsentIQApiClient(
         propertyKey: testPropertyKey,
@@ -125,6 +131,35 @@ void main() {
       for (final submit in server.submits) {
         expect(submit.json['captchaToken'], 'tok');
       }
+    });
+
+    test('a 428 is answered once, with the identity token on both sends',
+        () async {
+      final server = FakeServer(submitStatuses: [428, 200]);
+      final captcha = FakeCaptcha();
+      final form =
+          buildForm(server, captcha: captcha, identityToken: 'v2.1.sig');
+
+      expect(await form.submit(), isNotNull);
+
+      expect(server.submits, hasLength(2));
+      expect(server.submits[1].json['captchaToken'], 'tok');
+      expect(
+        server.submits.map((r) => r.json['identityToken']),
+        ['v2.1.sig', 'v2.1.sig'],
+      );
+      expect(captcha.calls, 1);
+    });
+
+    test('a cancelled challenge returns null and sends nothing more', () async {
+      final server = FakeServer(submitStatuses: [428]);
+      final form = buildForm(server, captcha: FakeCaptcha(null));
+
+      final logs =
+          await captureLogs(() async => expect(await form.submit(), isNull));
+
+      expect(server.submits, hasLength(1));
+      expect(logs, ['[ConsentIQ] Captcha check failed; consent not submitted']);
     });
 
     test('captcha failure: nothing posted, null returned, warning logged',

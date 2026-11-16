@@ -89,6 +89,7 @@ Pass a `ConsentIQConfig` to `ConsentIQ`.
 | `language` | property default | Language for the sheet, for example `en` or `ar`. |
 | `autoShow` | `true` | Show the sheet on init when no consent is recorded. |
 | `debug` | `false` | Verbose logging prefixed `[ConsentIQ]`. Turn it on in debug builds only. |
+| `identityToken` | `null` | Your server's signature for this person, sent with every submission. ConsentIQ verifies it and marks the record verified by your organization. Sign it on your server, never in the app. `FormConsent` takes the same parameter. |
 
 ### State and operations
 
@@ -171,11 +172,13 @@ The SDK is a Flutter plugin for this reason: its Android and iOS code writes the
 
 ## Captcha
 
-When "Require CAPTCHA" is on for a property, the SDK runs a Cloudflare Turnstile check before each submission, invisibly, in a hidden web view loaded from your ConsentIQ URL (`https://consent.iqworks.ai` by default) and from challenges.cloudflare.com. There is nothing to configure.
+When "Require CAPTCHA" is on for a property, the SDK runs a Cloudflare Turnstile check before each submission, in a web view loaded from your ConsentIQ URL (`https://consent.iqworks.ai` by default) and from challenges.cloudflare.com. ConsentIQ may also ask for a captcha on any property when a submission looks automated; the SDK then solves one and submits once more. There is nothing to configure.
+
+The check runs invisibly. If it has not finished within 3 seconds, it is shown over the app with a close button, so a visitor Cloudflare wants to click can do so; once shown it waits up to 2 minutes.
 
 - Keep `ConsentIQProvider` mounted above the app, as Quick start already asks. It hosts the web view, for `FormConsent` too.
-- If the check fails or Turnstile wants the visitor to solve a challenge, nothing is sent and a `[ConsentIQ]` warning is logged. `ConsentIQ` keeps the choice on the device, as for any failed submission, and `FormConsent.submit()` returns null.
-- List Cloudflare Turnstile in your app's privacy disclosures, such as the App Store privacy details and the Google Play data safety form.
+- If the check fails, times out or is closed, nothing more is sent and a `[ConsentIQ]` warning is logged. `ConsentIQ` keeps the choice on the device, as for any failed submission, and `FormConsent.submit()` returns null.
+- List Cloudflare Turnstile in your app's privacy disclosures, such as the App Store privacy details and the Google Play data safety form, whether or not the property requires a captcha.
 
 In tests, pass a `captchaTokenSource` to `ConsentIQ` or `FormConsent` so no web view is created.
 

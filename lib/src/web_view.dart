@@ -80,6 +80,27 @@ class HiddenWebViews extends ChangeNotifier {
   final List<WebViewController> controllers = [];
   final List<Object> hosts = [];
 
+  /// The web view shown over the app for a visitor to interact with, and what
+  /// its close button does.
+  WebViewController? revealed;
+  void Function()? _onCancel;
+
+  void reveal(WebViewController controller,
+      {required void Function() onCancel}) {
+    revealed = controller;
+    _onCancel = onCancel;
+    notifyListeners();
+  }
+
+  void conceal(WebViewController controller) {
+    if (!identical(revealed, controller)) return;
+    revealed = null;
+    _onCancel = null;
+    notifyListeners();
+  }
+
+  void cancel() => _onCancel?.call();
+
   void add(WebViewController controller) {
     if (controllers.contains(controller)) return;
     controllers.add(controller);
@@ -90,7 +111,11 @@ class HiddenWebViews extends ChangeNotifier {
     if (controllers.remove(controller)) notifyListeners();
   }
 
-  void clear() => controllers.clear();
+  void clear() {
+    controllers.clear();
+    revealed = null;
+    _onCancel = null;
+  }
 
   bool isActive(Object host) =>
       hosts.isNotEmpty && identical(hosts.first, host);
@@ -154,25 +179,90 @@ class _HiddenWebViewHostState extends State<HiddenWebViewHost> {
       children: [
         widget.child,
         for (final controller in controllers)
-          Positioned(
-            key: ObjectKey(controller),
-            left: 0,
-            top: 0,
-            width: 1,
-            height: 1,
-            child: IgnorePointer(
-              child: Opacity(
-                opacity: 0.01,
-                child: ExcludeSemantics(
-                  child: Directionality(
-                    textDirection: TextDirection.ltr,
-                    child: WebViewWidget(controller: controller),
+          if (identical(controller, _registry.revealed))
+            Positioned.fill(
+              key: ObjectKey(controller),
+              child: _RevealedChallenge(
+                controller: controller,
+                onCancel: _registry.cancel,
+              ),
+            )
+          else
+            Positioned(
+              key: ObjectKey(controller),
+              left: 0,
+              top: 0,
+              width: 1,
+              height: 1,
+              child: IgnorePointer(
+                child: Opacity(
+                  opacity: 0.01,
+                  child: ExcludeSemantics(
+                    child: Directionality(
+                      textDirection: TextDirection.ltr,
+                      child: WebViewWidget(controller: controller),
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
       ],
+    );
+  }
+}
+
+/// A challenge Cloudflare wants the visitor to interact with, shown over the
+/// app with a button that gives up on it.
+class _RevealedChallenge extends StatelessWidget {
+  const _RevealedChallenge({required this.controller, required this.onCancel});
+
+  final WebViewController controller;
+  final void Function() onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.ltr,
+      child: ColoredBox(
+        color: const Color(0x66000000),
+        child: Center(
+          child: SizedBox(
+            width: 320,
+            height: 140,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFFFFF),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                children: [
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Semantics(
+                      button: true,
+                      label: 'Cancel',
+                      child: GestureDetector(
+                        key: const ValueKey('consentiq-captcha-cancel'),
+                        behavior: HitTestBehavior.opaque,
+                        onTap: onCancel,
+                        child: const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: Text(
+                            '\u2715',
+                            style: TextStyle(
+                                fontSize: 18, color: Color(0xFF444444)),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(child: WebViewWidget(controller: controller)),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
