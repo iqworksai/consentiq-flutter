@@ -12,11 +12,12 @@ import io.flutter.plugin.common.MethodChannel;
 import java.util.List;
 import java.util.Map;
 
-/** Writes the IABTCF_* keys to the app's default SharedPreferences. */
+/** Writes the IABTCF_* keys to the app's default SharedPreferences, and runs Play Integrity. */
 public final class ConsentIQPlugin implements FlutterPlugin, MethodChannel.MethodCallHandler {
   private static final String CHANNEL = "ai.iqworks.consentiq/iabtcf";
 
   private MethodChannel channel;
+  private MethodChannel attestChannel;
   private SharedPreferences preferences;
 
   @Override
@@ -27,12 +28,16 @@ public final class ConsentIQPlugin implements FlutterPlugin, MethodChannel.Metho
         context.getSharedPreferences(context.getPackageName() + "_preferences", Context.MODE_PRIVATE);
     channel = new MethodChannel(binding.getBinaryMessenger(), CHANNEL);
     channel.setMethodCallHandler(this);
+    attestChannel = new MethodChannel(binding.getBinaryMessenger(), PlayIntegrityHandler.CHANNEL);
+    attestChannel.setMethodCallHandler(new PlayIntegrityHandler(context));
   }
 
   @Override
   public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
     channel.setMethodCallHandler(null);
     channel = null;
+    attestChannel.setMethodCallHandler(null);
+    attestChannel = null;
     preferences = null;
   }
 

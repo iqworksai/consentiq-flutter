@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
+import 'attestation.dart';
 import 'config.dart';
 import 'consent_state.dart';
 import 'json.dart';
@@ -18,7 +20,7 @@ class ConsentIQApiException implements Exception {
   String toString() => 'ConsentIQApiException: $message';
 }
 
-class ConsentIQApiClient {
+class ConsentIQApiClient implements AttestationServer {
   ConsentIQApiClient({
     required this.propertyKey,
     String apiUrl = defaultApiUrl,
@@ -34,6 +36,10 @@ class ConsentIQApiClient {
   final http.Client _client;
   final bool _ownsClient;
   final ConsentIQLogger _logger;
+
+  /// Signs each submission so ConsentIQ knows it came from this app; null
+  /// sends nothing.
+  AppAttestation? attestation;
 
   static String _trimSlash(String url) =>
       url.endsWith('/') ? url.substring(0, url.length - 1) : url;
@@ -95,10 +101,44 @@ class ConsentIQApiClient {
       if (identityToken != null) 'identityToken': identityToken,
     };
     _logger.log('Submitting consent ($consentMethod)');
-    final json = await _post('/api/public/consent', body);
+    final encoded = jsonEncode(body);
+    final signed = await attestation?.headers(encoded) ?? const {};
+    final json = await _post('/api/public/consent', encoded, signed);
     final result = ConsentSubmission.fromJson(json);
     _logger.log('Consent submitted');
     return result;
+  }
+
+  @override
+  Future<Uint8List> appAttestChallenge() async {
+    final json = await _post(
+      '/api/public/app-attest/challenge',
+      jsonEncode({'propertyKey': propertyKey}),
+    );
+    final challenge = asStringOrNull(json['challenge']);
+    if (challenge == null) {
+      throw const ConsentIQApiException('Invalid challenge');
+    }
+    return decodeBase64Url(challenge);
+  }
+
+  @override
+  Future<bool> registerAppAttestKey(
+    String keyId,
+    Uint8List attestation,
+    Uint8List challenge,
+  ) async {
+    final response = await _client.post(
+      Uri.parse('$apiUrl/api/public/app-attest/register'),
+      headers: _headers,
+      body: jsonEncode({
+        'propertyKey': propertyKey,
+        'keyId': keyId,
+        'attestation': base64Encode(attestation),
+        'challenge': encodeBase64Url(challenge),
+      }),
+    );
+    return response.statusCode == 204;
   }
 
   Future<ConsentVerification> verifyConsent(String consentId) async {
@@ -122,12 +162,13 @@ class ConsentIQApiClient {
 
   Future<Map<String, dynamic>> _post(
     String path,
-    Map<String, Object?> body,
-  ) async {
+    String body, [
+    Map<String, String> extraHeaders = const {},
+  ]) async {
     final response = await _client.post(
       Uri.parse('$apiUrl$path'),
-      headers: _headers,
-      body: jsonEncode(body),
+      headers: {..._headers, ...extraHeaders},
+      body: body,
     );
     return _decode(response);
   }

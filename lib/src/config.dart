@@ -56,6 +56,7 @@ class ConsentIQConfig {
     this.autoShow = true,
     this.debug = false,
     this.identityToken,
+    this.playIntegrityCloudProjectNumber,
     this.onConsentChange,
     this.onOpen,
     this.onAccept,
@@ -85,6 +86,11 @@ class ConsentIQConfig {
   /// unread. ConsentIQ verifies it and marks the record verified by your
   /// organization. Sign it on your server, never in the app.
   final String? identityToken;
+
+  /// The Google Cloud project number linked to the app in Play Console. It
+  /// turns on Play Integrity on Android; without it ConsentIQ asks Android
+  /// submissions for a captcha instead.
+  final int? playIntegrityCloudProjectNumber;
 
   /// Fires after every recorded write.
   final ConsentChangeCallback? onConsentChange;

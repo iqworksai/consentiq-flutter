@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import 'api_client.dart';
+import 'attestation.dart';
 import 'captcha.dart';
 import 'config.dart';
 import 'consent_state.dart';
@@ -37,7 +38,13 @@ class ConsentIQ extends ChangeNotifier {
         _captchaTokenSource = captchaTokenSource,
         _tcfKeys = tcfKeyStore ?? const TcfKeyStore(),
         _logger = ConsentIQLogger(debug: options.debug),
-        _language = options.language ?? 'en';
+        _language = options.language ?? 'en' {
+    _api.attestation ??= AppAttestation(
+      server: _api,
+      propertyKey: options.propertyKey,
+      playIntegrityCloudProjectNumber: options.playIntegrityCloudProjectNumber,
+    );
+  }
 
   final ConsentIQConfig options;
   final ConsentIQApiClient _api;

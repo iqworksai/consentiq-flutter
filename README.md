@@ -89,6 +89,7 @@ Pass a `ConsentIQConfig` to `ConsentIQ`.
 | `language` | property default | Language for the sheet, for example `en` or `ar`. |
 | `autoShow` | `true` | Show the sheet on init when no consent is recorded. |
 | `debug` | `false` | Verbose logging prefixed `[ConsentIQ]`. Turn it on in debug builds only. |
+| `playIntegrityCloudProjectNumber` | `null` | The Google Cloud project number linked to your app in Play Console. Turns on Play Integrity on Android, see [App attestation](#app-attestation). |
 | `identityToken` | `null` | Your server's signature for this person, sent with every submission. ConsentIQ verifies it and marks the record verified by your organization. Sign it on your server, never in the app. `FormConsent` takes the same parameter. |
 
 ### State and operations
@@ -181,6 +182,15 @@ The check runs invisibly. If it has not finished within 3 seconds, it is shown o
 - List Cloudflare Turnstile in your app's privacy disclosures, such as the App Store privacy details and the Google Play data safety form, whether or not the property requires a captcha.
 
 In tests, pass a `captchaTokenSource` to `ConsentIQ` or `FormConsent` so no web view is created.
+
+## App attestation
+
+Each submission proves it comes from your app, so ConsentIQ can tell it from a script claiming to be it.
+
+- **iOS: App Attest.** Once per install the SDK generates an App Attest key, registers it with ConsentIQ, then signs each submission's exact body. Add the App Attest capability to the Runner target (entitlement `com.apple.developer.devicecheck.appattest-environment`, `production` for App Store builds), and enter your Team ID and bundle ID in the property's settings.
+- **Android: Play Integrity.** With `playIntegrityCloudProjectNumber` set, each submission carries a Play Integrity token bound to its exact body. Link the Cloud project to your app in Play Console, then download the response encryption keys (Play Console, App integrity) and enter them with your package name and signing certificate digest in the property's settings.
+
+Where attestation cannot run (simulators, emulators, devices without Google Play services, no project number), nothing is sent and ConsentIQ asks for the [captcha](#captcha) instead.
 
 ## License
 

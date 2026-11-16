@@ -11,6 +11,7 @@ Writes the IABTCF_* keys to UserDefaults.standard, where IAB vendors' SDKs read 
   s.source           = { :path => '.' }
   s.source_files = 'consentiq/Sources/consentiq/**/*.swift'
   s.dependency 'Flutter'
+  s.weak_frameworks = 'DeviceCheck'
   s.platform = :ios, '12.0'
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386' }
   s.swift_version = '5.0'

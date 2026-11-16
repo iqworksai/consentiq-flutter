@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'api_client.dart';
+import 'attestation.dart';
 import 'captcha.dart';
 import 'config.dart';
 import 'consent_state.dart';
@@ -35,6 +36,7 @@ class FormConsent extends ChangeNotifier {
     ConsentIQApiClient? apiClient,
     CaptchaTokenSource? captchaTokenSource,
     this.identityToken,
+    int? playIntegrityCloudProjectNumber,
     bool debug = false,
   })  : _api = apiClient ??
             ConsentIQApiClient(
@@ -46,6 +48,11 @@ class FormConsent extends ChangeNotifier {
         _captchaTokenSource = captchaTokenSource,
         _logger = ConsentIQLogger(debug: debug) {
     _consents = _cleared();
+    _api.attestation ??= AppAttestation(
+      server: _api,
+      propertyKey: propertyKey,
+      playIntegrityCloudProjectNumber: playIntegrityCloudProjectNumber,
+    );
   }
 
   final String subjectId;

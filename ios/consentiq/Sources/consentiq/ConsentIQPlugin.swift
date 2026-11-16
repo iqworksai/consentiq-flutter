@@ -1,7 +1,8 @@
 import Flutter
 import Foundation
 
-/// Writes the IABTCF_* keys to `UserDefaults.standard`, where IAB vendors read.
+/// Writes the IABTCF_* keys to `UserDefaults.standard`, where IAB vendors read, and registers the
+/// App Attest channel.
 public final class ConsentIQPlugin: NSObject, FlutterPlugin {
   private static let channelName = "ai.iqworks.consentiq/iabtcf"
 
@@ -11,10 +12,15 @@ public final class ConsentIQPlugin: NSObject, FlutterPlugin {
     self.defaults = defaults
   }
 
+  private static let appAttest = AppAttestPlugin()
+
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(
       name: channelName, binaryMessenger: registrar.messenger())
     registrar.addMethodCallDelegate(ConsentIQPlugin(), channel: channel)
+    let attestChannel = FlutterMethodChannel(
+      name: AppAttestPlugin.channelName, binaryMessenger: registrar.messenger())
+    attestChannel.setMethodCallHandler(appAttest.handle)
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
