@@ -24,14 +24,22 @@ class ConsentSaveEvent {
 
 /// A failure the SDK recovered from. The app keeps running.
 class ConsentIQError {
-  const ConsentIQError({required this.source, required this.code});
+  const ConsentIQError({
+    required this.source,
+    required this.code,
+    this.message,
+  });
 
-  /// What failed: `tcf` for the IAB TCF page and its keys.
+  /// What failed: `tcf` for the IAB TCF page and its keys, `consent` for a
+  /// submission ConsentIQ refused.
   final String source;
 
-  /// The failure, such as `timeout`, `load`, `key-store`, or the hosted
-  /// page's own code.
+  /// The failure, such as `timeout`, `load`, `key-store`, the hosted page's
+  /// own code, or `refused` for a 403.
   final String code;
+
+  /// The server's own words, when it gave any.
+  final String? message;
 
   @override
   String toString() => 'ConsentIQError($source: $code)';

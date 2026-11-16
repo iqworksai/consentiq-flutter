@@ -116,7 +116,7 @@ Operations:
 - `showTcfPreferences()`: re-open the TCF page.
 - `resetConsent()`: clear the local cache and subject id and return to defaults.
 
-Every write updates local state first, then posts to ConsentIQ, then caches the result and calls `onConsentChange`. A failed post is logged and the local state is kept.
+Every write updates local state first, then posts to ConsentIQ, then caches the result and calls `onConsentChange`. A failed post is logged and the local state is kept. When ConsentIQ answers `429 Too many requests`, the decision is kept and sent once more on each of the next launches, without a captcha, until it is recorded, three attempts have been made, or seven days have passed. A `400`, `404`, `409` or `422` answer drops it, and a `403` fires `onError` and is not retried.
 
 ### Widgets
 
@@ -157,7 +157,7 @@ All callbacks on `ConsentIQConfig` are optional.
 | `onReject(event)` | The visitor tapped Reject all. |
 | `onSave(event)` | The visitor saved a custom selection. |
 | `onClose()` | The visitor backed out with the back button, a swipe or a tap outside the sheet. Never fires on accept, reject, save or `hideSheet()`. |
-| `onError(error)` | The SDK recovered from a failure, such as the TCF page failing to load. `error.source` and `error.code` say what failed. |
+| `onError(error)` | The SDK recovered from a failure, such as the TCF page failing to load. `error.source` and `error.code` say what failed. A submission ConsentIQ refused with 403 (an identity token that did not verify, or one the property requires) arrives as source `consent`, code `refused`, with the server's words in `error.message`. |
 
 ## IAB TCF
 

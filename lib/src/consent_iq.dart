@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'api_client.dart';
 import 'attestation.dart';
 import 'captcha.dart';
+import 'pending.dart';
 import 'config.dart';
 import 'consent_state.dart';
 import 'log.dart';
@@ -53,6 +54,10 @@ class ConsentIQ extends ChangeNotifier {
   final CaptchaTokenSource? _captchaTokenSource;
   final TcfKeyStore _tcfKeys;
   final ConsentIQLogger _logger;
+
+  /// The clock pending decisions are aged by.
+  @visibleForTesting
+  DateTime Function() clock = DateTime.now;
 
   ConsentState _consent = defaultConsentState();
   MarketingConsentState _marketingConsent = {};
@@ -112,6 +117,7 @@ class ConsentIQ extends ChangeNotifier {
       final sid = _subjectId;
       if (sid != null && sid.isNotEmpty) {
         found = await _restoreConsent(sid);
+        if (await _resendPending(sid)) found = true;
       }
 
       _consentFound = found;
@@ -340,6 +346,7 @@ class ConsentIQ extends ChangeNotifier {
           identityToken: options.identityToken,
         ),
       );
+      await _storage.clearPending();
       await _storage.saveConsent(cookieConsents);
       options.onConsentChange?.call(
         Map.unmodifiable(cookieConsents),
@@ -347,9 +354,85 @@ class ConsentIQ extends ChangeNotifier {
       );
     } on CaptchaException {
       _logger.warn(captchaFailedWarning);
+    } on ConsentIQApiException catch (e) {
+      _logger.warn('Failed to submit consent', e);
+      await _handleRefusal(e, cookieConsents, marketingConsents);
     } catch (e) {
       _logger.warn('Failed to submit consent', e);
     }
+  }
+
+  // 429 keeps the decision for one quiet retry per launch; a refusal resending
+  // cannot change drops it; 403 (an identity token that did not verify, or one
+  // the property requires) goes to the app.
+  Future<void> _handleRefusal(
+    ConsentIQApiException e,
+    ConsentState cookieConsents,
+    MarketingConsentState marketingConsents,
+  ) async {
+    final config = _config;
+    if (e.statusCode == 429 && !(config != null && requiresCaptcha(config))) {
+      await _storage.savePending(PendingDecision(
+        cookieConsents: cookieConsents,
+        marketingConsents: marketingConsents,
+        attempts: 0,
+        createdAt: clock(),
+      ));
+    } else if (e.statusCode == 403) {
+      await _refused(e);
+    } else if (dropsTheDecision(e.statusCode)) {
+      await _storage.clearPending();
+    }
+  }
+
+  Future<void> _refused(ConsentIQApiException e) async {
+    await _storage.clearPending();
+    options.onError?.call(
+      ConsentIQError(source: 'consent', code: 'refused', message: e.message),
+    );
+  }
+
+  // Resends a decision kept after a 429, once per launch and never with a
+  // captcha. True when it was recorded, so the sheet need not ask again.
+  Future<bool> _resendPending(String sid) async {
+    final pending = await _storage.loadPending();
+    if (pending == null) return false;
+    final config = _config;
+    if (pending.isSpent(clock()) ||
+        (config != null && requiresCaptcha(config))) {
+      await _storage.clearPending();
+      return false;
+    }
+    await _storage.savePending(pending.retried());
+    try {
+      await _api.submitConsent(
+        subjectId: sid,
+        cookieConsents: pending.cookieConsents,
+        marketingConsents: pending.marketingConsents,
+        consentMethod: 'sdk',
+        identityToken: options.identityToken,
+      );
+    } on ConsentIQApiException catch (e) {
+      _logger.log('Pending consent not recorded: ${e.message}');
+      if (e.statusCode == 403) {
+        await _refused(e);
+      } else if (dropsTheDecision(e.statusCode)) {
+        await _storage.clearPending();
+      }
+      return false;
+    } catch (e) {
+      _logger.log('Pending consent not recorded: $e');
+      return false;
+    }
+    await _storage.clearPending();
+    _consent = normalizeConsentState(pending.cookieConsents);
+    _marketingConsent = Map.of(pending.marketingConsents);
+    await _storage.saveConsent(_consent);
+    options.onConsentChange?.call(
+      Map.unmodifiable(_consent),
+      Map.unmodifiable(_marketingConsent),
+    );
+    return true;
   }
 
   Future<void> _startTcf({required bool reopen}) async {

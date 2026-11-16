@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:consentiq/consentiq.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -593,6 +595,155 @@ void main() {
 
       expect(server.submits, isEmpty);
       expect(consentIQ.hasConsent('analytics'), isTrue);
+    });
+  });
+
+  group('a decision ConsentIQ asks to resend', () {
+    late List<ConsentIQError> errors;
+    late int changes;
+
+    setUp(() {
+      errors = [];
+      changes = 0;
+    });
+
+    Future<ConsentIQ> launch(
+      FakeServer server, {
+      DateTime? at,
+      FakeCaptcha? captcha,
+    }) async {
+      final consentIQ = build(
+        server,
+        options: ConsentIQConfig(
+          propertyKey: testPropertyKey,
+          autoShow: false,
+          onConsentChange: (_, __) => changes++,
+          onError: errors.add,
+        ),
+        captcha: captcha,
+      );
+      if (at != null) consentIQ.clock = () => at;
+      await consentIQ.init();
+      return consentIQ;
+    }
+
+    Future<String?> pending() async =>
+        (await SharedPreferences.getInstance()).getString('consentiq_pending');
+
+    test('429 keeps it, and the next launch sends it without a captcha',
+        () async {
+      final first = FakeServer(submitStatus: 429);
+      await captureLogs(() async => (await launch(first)).acceptAll());
+      expect(await pending(), isNotNull);
+      expect(changes, 0);
+
+      final second = FakeServer();
+      final captcha = FakeCaptcha();
+      final relaunched = await launch(second, captcha: captcha);
+
+      expect(second.submits, hasLength(1));
+      expect(second.submits.single.json.containsKey('captchaToken'), isFalse);
+      expect(second.submits.single.json['cookieConsents']['analytics'], isTrue);
+      expect(await pending(), isNull);
+      expect(relaunched.hasConsent('analytics'), isTrue);
+      expect(await cachedConsent(), isNotNull);
+      expect(changes, 1);
+      expect(captcha.calls, 0);
+    });
+
+    test('the retry is quiet on a challenge and stops after three launches',
+        () async {
+      await captureLogs(() async =>
+          (await launch(FakeServer(submitStatus: 429))).acceptAll());
+
+      final challenging = FakeServer(submitStatuses: [428]);
+      final captcha = FakeCaptcha();
+      for (var i = 0; i < 3; i++) {
+        await launch(challenging, captcha: captcha);
+      }
+      expect(captcha.calls, 0);
+      expect(challenging.submits, hasLength(3));
+      expect(jsonDecode((await pending())!)['attempts'], 3);
+
+      await launch(challenging, captcha: captcha);
+      expect(challenging.submits, hasLength(3));
+      expect(await pending(), isNull);
+    });
+
+    test('a decision older than seven days is dropped', () async {
+      final start = DateTime(2026, 1, 1);
+      await captureLogs(() async =>
+          (await launch(FakeServer(submitStatus: 429), at: start)).acceptAll());
+
+      final later = FakeServer();
+      await launch(later, at: start.add(const Duration(days: 8)));
+
+      expect(later.submits, isEmpty);
+      expect(await pending(), isNull);
+    });
+
+    test('400, 404, 409 and 422 drop it', () async {
+      for (final status in [400, 404, 409, 422]) {
+        await captureLogs(() async =>
+            (await launch(FakeServer(submitStatus: 429))).acceptAll());
+        expect(await pending(), isNotNull, reason: '$status');
+
+        await captureLogs(() async =>
+            (await launch(FakeServer(submitStatus: status))).rejectAll());
+        expect(await pending(), isNull, reason: '$status');
+      }
+    });
+
+    test('403 reaches the app and is not retried', () async {
+      final refusing = FakeServer(
+        submitStatus: 403,
+        submitBody: const {'error': 'Identity token did not verify'},
+      );
+      await captureLogs(() async => (await launch(refusing)).acceptAll());
+      final next = FakeServer();
+      await launch(next);
+
+      expect(next.submits, isEmpty);
+      expect(errors.single.source, 'consent');
+      expect(errors.single.code, 'refused');
+      expect(errors.single.message, 'Identity token did not verify');
+      expect(await pending(), isNull);
+    });
+
+    test('a 403 to the retry reaches the app too', () async {
+      await captureLogs(() async =>
+          (await launch(FakeServer(submitStatus: 429))).acceptAll());
+
+      await captureLogs(() => launch(FakeServer(
+            submitStatus: 403,
+            submitBody: const {'error': 'Verified identity required'},
+          )));
+
+      expect(errors.single.message, 'Verified identity required');
+      expect(await pending(), isNull);
+    });
+
+    test('a property that requires a captcha keeps nothing to retry', () async {
+      await captureLogs(() async => (await launch(
+            FakeServer(
+              config: configJson(
+                  requireCaptcha: true, turnstileSiteKey: 'site-key'),
+              submitStatus: 429,
+            ),
+            captcha: FakeCaptcha(),
+          ))
+              .acceptAll());
+
+      expect(await pending(), isNull);
+    });
+
+    test('clearAll forgets it', () async {
+      await captureLogs(() async =>
+          (await launch(FakeServer(submitStatus: 429))).acceptAll());
+
+      await ConsentStorage().clearAll();
+
+      expect(await pending(), isNull);
     });
   });
 

@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 
 import 'consent_state.dart';
 import 'json.dart';
+import 'pending.dart';
 
 class ConsentStorage {
   ConsentStorage({SharedPreferences? preferences}) : _preferences = preferences;
@@ -13,6 +14,7 @@ class ConsentStorage {
   static const String subjectIdKey = 'consentiq_subject_id';
   static const String tcfKey = 'consentiq_tcf';
   static const String tcfCmpKey = 'consentiq_tcf_cmp';
+  static const String pendingKey = 'consentiq_pending';
 
   SharedPreferences? _preferences;
 
@@ -115,13 +117,37 @@ class ConsentStorage {
     } catch (_) {}
   }
 
-  /// Removes the consent cache, the TCF record and the subject id.
+  Future<PendingDecision?> loadPending() async {
+    try {
+      final raw = (await _prefs()).getString(pendingKey);
+      return raw == null ? null : PendingDecision.fromJson(jsonDecode(raw));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> savePending(PendingDecision pending) async {
+    try {
+      await (await _prefs())
+          .setString(pendingKey, jsonEncode(pending.toJson()));
+    } catch (_) {}
+  }
+
+  Future<void> clearPending() async {
+    try {
+      await (await _prefs()).remove(pendingKey);
+    } catch (_) {}
+  }
+
+  /// Removes the consent cache, the TCF record, the subject id and any
+  /// decision waiting to be resent.
   Future<void> clearAll() async {
     try {
       final prefs = await _prefs();
       await prefs.remove(consentKey);
       await prefs.remove(tcfKey);
       await prefs.remove(subjectIdKey);
+      await prefs.remove(pendingKey);
     } catch (_) {}
   }
 }
