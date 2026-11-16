@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:consentiq/consentiq.dart';
@@ -12,9 +13,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'fixtures.dart';
 
 class FakeServer implements AttestationServer {
-  FakeServer({this.registers = true});
+  FakeServer({this.registers = true, this.status});
 
   final bool registers;
+  final int? status;
   final Uint8List challenge = Uint8List.fromList([1, 2, 3, 250]);
   int challenges = 0;
   final List<String> registered = [];
@@ -26,13 +28,13 @@ class FakeServer implements AttestationServer {
   }
 
   @override
-  Future<bool> registerAppAttestKey(
+  Future<int> registerAppAttestKey(
     String keyId,
     Uint8List attestation,
     Uint8List challenge,
   ) async {
     registered.add(keyId);
-    return registers;
+    return status ?? (registers ? 204 : 403);
   }
 }
 
@@ -76,11 +78,19 @@ void main() {
         .setMockMethodCallHandler(channel, null);
   });
 
-  AppAttestation attestation(FakeServer server, {int? project}) =>
+  var now = DateTime.fromMillisecondsSinceEpoch(1800000000000);
+
+  AppAttestation attestation(
+    FakeServer server, {
+    int? project,
+    String apiUrl = testApiUrl,
+  }) =>
       AppAttestation(
         server: server,
+        apiUrl: apiUrl,
         propertyKey: testPropertyKey,
         playIntegrityCloudProjectNumber: project,
+        clock: () => now,
       );
 
   group('iOS App Attest', () {
@@ -158,6 +168,79 @@ void main() {
       );
     });
 
+    test('the challenge is passed on as its decoded bytes', () async {
+      // The contract's vector: challenge "AQID-g" is the bytes 01 02 03 FA,
+      // and the platform code hashes those bytes, never the base64url text.
+      final server = FakeServer();
+      await attestation(server).headers('x');
+
+      final attest = calls.firstWhere((c) => c.method == 'appAttestKey');
+      expect((attest.arguments as Map)['clientData'], [1, 2, 3, 250]);
+      expect(decodeBase64Url('AQID-g'), [1, 2, 3, 250]);
+    });
+
+    test('a key belongs to one server', () async {
+      final server = FakeServer();
+      await attestation(server).headers('x');
+      keyId = 'key-2';
+
+      final production = await attestation(
+        server,
+        apiUrl: 'https://prod.example.test',
+      ).headers('x');
+
+      expect(production['X-ConsentIQ-Attest-Key'], 'key-2');
+      expect(server.registered, hasLength(2));
+    });
+
+    test('an unconfigured app waits days before registering again', () async {
+      final unconfigured = FakeServer(status: 409);
+      await attestation(unconfigured).headers('x');
+
+      now = now.add(const Duration(days: 1));
+      final next = FakeServer();
+      expect(await attestation(next).headers('x'), isEmpty);
+      expect(next.registered, isEmpty);
+
+      now = now.add(const Duration(days: 3));
+      expect(
+        (await attestation(next).headers('x'))['X-ConsentIQ-Attest-Key'],
+        'key-1',
+      );
+    });
+
+    test('a key challenged three times in a row is registered again', () async {
+      final server = FakeServer();
+      final attestor = attestation(server);
+      await attestor.headers('x');
+
+      await attestor.attestedRequestWasChallenged();
+      await attestor.attestedRequestWasChallenged();
+      attestor.attestedRequestWasAccepted();
+      await attestor.attestedRequestWasChallenged();
+      await attestor.attestedRequestWasChallenged();
+      await attestation(server).headers('x');
+      expect(server.registered, hasLength(1),
+          reason: 'an acceptance resets the count');
+
+      await attestor.attestedRequestWasChallenged();
+      keyId = 'key-2';
+      final replaced = await attestation(server).headers('x');
+      expect(replaced['X-ConsentIQ-Attest-Key'], 'key-2');
+      expect(server.registered, hasLength(2));
+    });
+
+    test('a platform call that never answers sends nothing', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+              channel, (call) => Completer<Object?>().future);
+
+      await expectLater(
+        attestation(FakeServer()).headers('x'),
+        completion(isEmpty),
+      );
+    }, timeout: const Timeout(Duration(seconds: 20)));
+
     test('a missing platform implementation sends nothing', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, null);
@@ -184,6 +267,17 @@ void main() {
       expect(await attestation(FakeServer()).headers('x'), isEmpty);
       expect(calls, isEmpty);
     });
+
+    test('a Play Integrity call that never answers sends nothing', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+              channel, (call) => Completer<Object?>().future);
+
+      await expectLater(
+        attestation(FakeServer(), project: 1).headers('x'),
+        completion(isEmpty),
+      );
+    }, timeout: const Timeout(Duration(seconds: 20)));
 
     test('a failed check sends nothing', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -218,6 +312,7 @@ void main() {
       );
       client.attestation = AppAttestation(
         server: client,
+        apiUrl: testApiUrl,
         propertyKey: testPropertyKey,
         playIntegrityCloudProjectNumber: 1,
       );
@@ -234,7 +329,7 @@ void main() {
           Uint8List.fromList([9]),
           Uint8List.fromList([1, 2, 3, 250]),
         ),
-        isTrue,
+        204,
       );
       final register = jsonDecode(requests.last.body) as Map;
       expect(register, {

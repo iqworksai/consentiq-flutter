@@ -12,13 +12,14 @@ ConsentIQ build(
   FakeServer server, {
   ConsentIQConfig? options,
   FakeCaptcha? captcha,
+  String apiUrl = testApiUrl,
 }) {
   final config = options ?? const ConsentIQConfig(propertyKey: testPropertyKey);
   return ConsentIQ(
     config,
     apiClient: ConsentIQApiClient(
       propertyKey: config.propertyKey,
-      apiUrl: testApiUrl,
+      apiUrl: apiUrl,
       client: server.client,
     ),
     storage: ConsentStorage(),
@@ -611,11 +612,15 @@ void main() {
       FakeServer server, {
       DateTime? at,
       FakeCaptcha? captcha,
+      String? subjectId,
+      String apiUrl = testApiUrl,
     }) async {
       final consentIQ = build(
         server,
+        apiUrl: apiUrl,
         options: ConsentIQConfig(
           propertyKey: testPropertyKey,
+          subjectId: subjectId,
           autoShow: false,
           onConsentChange: (_, __) => changes++,
           onError: errors.add,
@@ -734,6 +739,92 @@ void main() {
           ))
               .acceptAll());
 
+      expect(await pending(), isNull);
+    });
+
+    test('it is never sent for someone else', () async {
+      await captureLogs(() async =>
+          (await launch(FakeServer(submitStatus: 429), subjectId: 'user-a'))
+              .acceptAll());
+      expect(await pending(), isNotNull);
+
+      final next = FakeServer();
+      await launch(next, subjectId: 'user-b');
+
+      expect(next.submits, isEmpty);
+      expect(await pending(), isNull);
+    });
+
+    test('it is never sent to another server', () async {
+      await captureLogs(() async =>
+          (await launch(FakeServer(submitStatus: 429), subjectId: 'user-a'))
+              .acceptAll());
+
+      final next = FakeServer();
+      await launch(next,
+          subjectId: 'user-a', apiUrl: 'https://staging.example.test');
+
+      expect(next.submits, isEmpty);
+      expect(await pending(), isNull);
+    });
+
+    test('a new decision replaces one still waiting', () async {
+      final consentIQ = await launch(FakeServer(submitStatuses: [429, 500]));
+      await captureLogs(() => consentIQ.acceptAll());
+      expect(await pending(), isNotNull);
+
+      await captureLogs(() => consentIQ.rejectAll());
+
+      expect(await pending(), isNull);
+    });
+
+    test('a newer record on ConsentIQ wins over it', () async {
+      final decidedAt = DateTime.utc(2025, 6, 1);
+      await captureLogs(() async =>
+          (await launch(FakeServer(submitStatus: 429), at: decidedAt))
+              .acceptAll());
+
+      final next = FakeServer(consent: savedConsentJson());
+      await launch(next, at: decidedAt.add(const Duration(minutes: 1)));
+
+      expect(next.submits, isEmpty,
+          reason: 'the record dated 2026-01-01 is newer than the decision');
+      expect(await pending(), isNull);
+    });
+
+    test('an older record on ConsentIQ does not stop the resend', () async {
+      final decidedAt = DateTime.utc(2027, 1, 1);
+      await captureLogs(() async =>
+          (await launch(FakeServer(submitStatus: 429), at: decidedAt))
+              .acceptAll());
+
+      final next = FakeServer(consent: savedConsentJson());
+      await launch(next, at: decidedAt.add(const Duration(minutes: 1)));
+
+      expect(next.submits, hasLength(1));
+      expect(await pending(), isNull);
+    });
+
+    test('a 429 that arrives after a reset is ignored', () async {
+      late ConsentIQ consentIQ;
+      final server = FakeServer(
+        submitStatus: 429,
+        onSubmit: () => consentIQ.resetConsent(),
+      );
+      consentIQ = await launch(server);
+
+      await captureLogs(() => consentIQ.acceptAll());
+
+      expect(await pending(), isNull);
+    });
+
+    test('a decision stored by an older version is discarded', () async {
+      SharedPreferences.setMockInitialValues({
+        'consentiq_pending':
+            '{"cookieConsents":{},"marketingConsents":{},"attempts":0,"createdAt":0}',
+      });
+
+      expect(await ConsentStorage().loadPending(), isNull);
       expect(await pending(), isNull);
     });
 

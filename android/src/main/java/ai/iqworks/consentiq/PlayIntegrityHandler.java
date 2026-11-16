@@ -65,7 +65,9 @@ final class PlayIntegrityHandler implements MethodChannel.MethodCallHandler {
               providerProject = projectNumber;
               request(prepared, requestHash, result);
             })
-        .addOnFailureListener(e -> result.error("play_integrity", e.getMessage(), null));
+        .addOnFailureListener(e -> result.error("play_integrity", e.getMessage(), null))
+        // A cancelled task calls neither listener above; answer it so the Dart call returns.
+        .addOnCanceledListener(() -> result.error("play_integrity", "cancelled", null));
   }
 
   private void request(
@@ -78,7 +80,8 @@ final class PlayIntegrityHandler implements MethodChannel.MethodCallHandler {
               // A provider can expire; the next submission prepares a fresh one.
               if (provider == current) provider = null;
               result.error("play_integrity", e.getMessage(), null);
-            });
+            })
+        .addOnCanceledListener(() -> result.error("play_integrity", "cancelled", null));
   }
 
   static String requestHash(String body) throws NoSuchAlgorithmException {

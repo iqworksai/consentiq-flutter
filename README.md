@@ -116,7 +116,7 @@ Operations:
 - `showTcfPreferences()`: re-open the TCF page.
 - `resetConsent()`: clear the local cache and subject id and return to defaults.
 
-Every write updates local state first, then posts to ConsentIQ, then caches the result and calls `onConsentChange`. A failed post is logged and the local state is kept. When ConsentIQ answers `429 Too many requests`, the decision is kept and sent once more on each of the next launches, without a captcha, until it is recorded, three attempts have been made, or seven days have passed. A `400`, `404`, `409` or `422` answer drops it, and a `403` fires `onError` and is not retried.
+Every write updates local state first, then posts to ConsentIQ, then caches the result and calls `onConsentChange`. A failed post is logged and the local state is kept. When ConsentIQ answers `429 Too many requests`, the decision is kept and sent once more on each of the next launches, without a captcha, until it is recorded, three attempts have been made, or seven days have passed. A `400`, `404`, `409` or `422` answer drops it, and a `403` fires `onError` and is not retried. It is resent only for the same subject id, property and API URL, a newer decision replaces it, and a newer record on ConsentIQ for that person wins over it.
 
 ### Widgets
 
@@ -175,7 +175,7 @@ The SDK is a Flutter plugin for this reason: its Android and iOS code writes the
 
 When "Require CAPTCHA" is on for a property, the SDK runs a Cloudflare Turnstile check before each submission, in a web view loaded from your ConsentIQ URL (`https://consent.iqworks.ai` by default) and from challenges.cloudflare.com. ConsentIQ may also ask for a captcha on any property when a submission looks automated; the SDK then solves one and submits once more. There is nothing to configure.
 
-The check runs invisibly. If it has not finished within 3 seconds, it is shown over the app with a close button, so a visitor Cloudflare wants to click can do so; once shown it waits up to 2 minutes.
+The check runs invisibly. When Cloudflare asks for interaction it is shown over the app with a close button, so the visitor can click; once shown it waits up to 2 minutes.
 
 - Keep `ConsentIQProvider` mounted above the app, as Quick start already asks. It hosts the web view, for `FormConsent` too.
 - If the check fails, times out or is closed, nothing more is sent and a `[ConsentIQ]` warning is logged. `ConsentIQ` keeps the choice on the device, as for any failed submission, and `FormConsent.submit()` returns null.

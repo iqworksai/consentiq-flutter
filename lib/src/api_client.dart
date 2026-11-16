@@ -103,7 +103,18 @@ class ConsentIQApiClient implements AttestationServer {
     _logger.log('Submitting consent ($consentMethod)');
     final encoded = jsonEncode(body);
     final signed = await attestation?.headers(encoded) ?? const {};
-    final json = await _post('/api/public/consent', encoded, signed);
+    final Map<String, Object?> json;
+    try {
+      json = await _post('/api/public/consent', encoded, signed);
+    } on ConsentIQApiException catch (e) {
+      // Challenged although this request carried a proof: the server may no
+      // longer know the key.
+      if (e.statusCode == 428 && signed.isNotEmpty) {
+        await attestation?.attestedRequestWasChallenged();
+      }
+      rethrow;
+    }
+    if (signed.isNotEmpty) attestation?.attestedRequestWasAccepted();
     final result = ConsentSubmission.fromJson(json);
     _logger.log('Consent submitted');
     return result;
@@ -123,7 +134,7 @@ class ConsentIQApiClient implements AttestationServer {
   }
 
   @override
-  Future<bool> registerAppAttestKey(
+  Future<int> registerAppAttestKey(
     String keyId,
     Uint8List attestation,
     Uint8List challenge,
@@ -138,7 +149,7 @@ class ConsentIQApiClient implements AttestationServer {
         'challenge': encodeBase64Url(challenge),
       }),
     );
-    return response.statusCode == 204;
+    return response.statusCode;
   }
 
   Future<ConsentVerification> verifyConsent(String consentId) async {

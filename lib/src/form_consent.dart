@@ -50,6 +50,7 @@ class FormConsent extends ChangeNotifier {
     _consents = _cleared();
     _api.attestation ??= AppAttestation(
       server: _api,
+      apiUrl: _api.apiUrl,
       propertyKey: propertyKey,
       playIntegrityCloudProjectNumber: playIntegrityCloudProjectNumber,
     );

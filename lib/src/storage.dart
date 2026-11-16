@@ -120,7 +120,10 @@ class ConsentStorage {
   Future<PendingDecision?> loadPending() async {
     try {
       final raw = (await _prefs()).getString(pendingKey);
-      return raw == null ? null : PendingDecision.fromJson(jsonDecode(raw));
+      if (raw == null) return null;
+      final pending = PendingDecision.fromJson(jsonDecode(raw));
+      if (pending == null) await clearPending();
+      return pending;
     } catch (_) {
       return null;
     }

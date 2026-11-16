@@ -21,9 +21,6 @@ const String captchaPagePath = '/api/public/captcha/mobile';
 const String captchaChannel = webViewChannel;
 const Duration captchaTimeout = Duration(seconds: 15);
 
-/// Turnstile signals nothing when it wants a click, so a token this late is
-/// taken to need one, and the challenge is shown.
-const Duration captchaRevealDelay = Duration(seconds: 3);
 const Duration captchaInteractionTimeout = Duration(minutes: 2);
 
 /// The captcha page for [propertyKey]; the key binds each token to the
@@ -121,7 +118,6 @@ class CaptchaController {
       if (!done.isCompleted) done.completeError(error);
     }
 
-    Timer? reveal;
     var timeout =
         Timer(captchaTimeout, () => fail(const CaptchaException('timeout')));
     _revealNow = () {
@@ -139,10 +135,9 @@ class CaptchaController {
         onCancel: () => fail(const CaptchaException('cancelled')),
       );
     };
-    unawaited(_obtain(
-      onExecuted: () =>
-          reveal = Timer(captchaRevealDelay, () => _revealNow?.call()),
-    ).then(
+    // The challenge stays hidden until the page posts `interactive`: only then
+    // does Cloudflare need a click.
+    unawaited(_obtain().then(
       (token) {
         if (!done.isCompleted) done.complete(token);
       },
@@ -159,7 +154,6 @@ class CaptchaController {
       }
       throw e is CaptchaException ? e : const CaptchaException('timeout');
     } finally {
-      reveal?.cancel();
       timeout.cancel();
       _revealNow = null;
       if (_revealed) {
@@ -173,13 +167,12 @@ class CaptchaController {
   void Function()? _revealNow;
   bool _revealed = false;
 
-  Future<String> _obtain({required void Function() onExecuted}) async {
+  Future<String> _obtain() async {
     final ready = _ensureLoaded();
     await ready.future;
     if (!identical(ready, _ready)) throw const CaptchaException('reset');
     final token = _token = Completer<String>()..future.ignore();
     await _webView!.runJavaScript('window.consentiqExecute()');
-    onExecuted();
     return token.future;
   }
 

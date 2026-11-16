@@ -42,6 +42,7 @@ class ConsentIQ extends ChangeNotifier {
         _language = options.language ?? 'en' {
     _api.attestation ??= AppAttestation(
       server: _api,
+      apiUrl: _api.apiUrl,
       propertyKey: options.propertyKey,
       playIntegrityCloudProjectNumber: options.playIntegrityCloudProjectNumber,
     );
@@ -68,6 +69,12 @@ class ConsentIQ extends ChangeNotifier {
   String? _regulation;
   String? _subjectId;
   Future<void>? _initFuture;
+  // Bumped by resetConsent, so a submit that started before a reset cannot
+  // store its 429 after it.
+  int _resetGeneration = 0;
+  // When the server's own record for this person was made, from the last
+  // lookup.
+  DateTime? _serverConsentedAt;
   bool _disposed = false;
   bool _consentFound = false;
   bool _tcfMode = false;
@@ -164,6 +171,8 @@ class ConsentIQ extends ChangeNotifier {
       _logger.warn('Failed to load consent, using local cache', e);
     }
     final saved = lookup?.consent;
+    _serverConsentedAt =
+        saved == null ? null : DateTime.tryParse(saved.consentedAt);
     if (saved != null) {
       _consent = normalizeConsentState(saved.cookieConsents);
       if (saved.marketingConsents != null) {
@@ -299,6 +308,7 @@ class ConsentIQ extends ChangeNotifier {
     _consent = defaultConsentState();
     _marketingConsent = {};
     _notify();
+    _resetGeneration++;
     await _clearTcfDecision();
     await _storage.clearAll();
     _subjectId = options.subjectId ??
@@ -321,6 +331,9 @@ class ConsentIQ extends ChangeNotifier {
     }
     final cookieConsents = Map<String, bool>.of(_consent);
     final marketingConsents = Map<String, bool>.of(_marketingConsent);
+    // A new decision replaces any earlier one still waiting to be resent.
+    await _storage.clearPending();
+    final generation = _resetGeneration;
     final config = _config;
     final tokenSource = _captchaTokenSource ??
         CaptchaController.forProperty(_api.apiUrl, options.propertyKey).token;
@@ -356,7 +369,8 @@ class ConsentIQ extends ChangeNotifier {
       _logger.warn(captchaFailedWarning);
     } on ConsentIQApiException catch (e) {
       _logger.warn('Failed to submit consent', e);
-      await _handleRefusal(e, cookieConsents, marketingConsents);
+      await _handleRefusal(
+          e, cookieConsents, marketingConsents, sid, generation);
     } catch (e) {
       _logger.warn('Failed to submit consent', e);
     }
@@ -369,14 +383,20 @@ class ConsentIQ extends ChangeNotifier {
     ConsentIQApiException e,
     ConsentState cookieConsents,
     MarketingConsentState marketingConsents,
+    String subjectId,
+    int generation,
   ) async {
     final config = _config;
     if (e.statusCode == 429 && !(config != null && requiresCaptcha(config))) {
+      if (generation != _resetGeneration) return;
       await _storage.savePending(PendingDecision(
         cookieConsents: cookieConsents,
         marketingConsents: marketingConsents,
         attempts: 0,
         createdAt: clock(),
+        subjectId: subjectId,
+        propertyKey: options.propertyKey,
+        apiUrl: _api.apiUrl,
       ));
     } else if (e.statusCode == 403) {
       await _refused(e);
@@ -398,7 +418,14 @@ class ConsentIQ extends ChangeNotifier {
     final pending = await _storage.loadPending();
     if (pending == null) return false;
     final config = _config;
-    if (pending.isSpent(clock()) ||
+    final owned = pending.belongsTo(sid, options.propertyKey, _api.apiUrl);
+    // A record the server made after this decision is the newer choice, so it
+    // wins.
+    final serverAt = _serverConsentedAt;
+    final superseded = serverAt != null && serverAt.isAfter(pending.createdAt);
+    if (!owned ||
+        superseded ||
+        pending.isSpent(clock()) ||
         (config != null && requiresCaptcha(config))) {
       await _storage.clearPending();
       return false;

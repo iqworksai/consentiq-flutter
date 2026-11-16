@@ -296,10 +296,11 @@ void main() {
 
     final cancel = find.byKey(const ValueKey('consentiq-captcha-cancel'));
 
-    testWidgets('a token within 3 s never shows the challenge', (tester) async {
+    testWidgets('a slow invisible challenge is never shown', (tester) async {
       final results = <Object>[];
       final web = await startChallenge(tester, results);
-      await tester.pump(const Duration(seconds: 2));
+      await tester.pump(const Duration(seconds: 10));
+      expect(cancel, findsNothing);
       web.post({'type': 'token', 'token': 't1'});
       await tester.pump();
       await tester.pump(const Duration(seconds: 5));
@@ -308,11 +309,12 @@ void main() {
       expect(cancel, findsNothing);
     });
 
-    testWidgets('after 3 s it is shown, and Cancel gives up on it',
+    testWidgets('an interactive message shows it, and Cancel gives up on it',
         (tester) async {
       final results = <Object>[];
-      await startChallenge(tester, results);
-      await tester.pump(const Duration(seconds: 3));
+      final web = await startChallenge(tester, results);
+      web.post({'type': 'interactive'});
+      await tester.pump();
       await tester.pump();
 
       expect(cancel, findsOneWidget);
@@ -345,8 +347,9 @@ void main() {
     testWidgets('once shown it waits up to 2 minutes, then times out',
         (tester) async {
       final results = <Object>[];
-      await startChallenge(tester, results);
-      await tester.pump(const Duration(seconds: 3));
+      final web = await startChallenge(tester, results);
+      web.post({'type': 'interactive'});
+      await tester.pump();
       await tester.pump(const Duration(seconds: 60));
       expect(results, isEmpty);
 

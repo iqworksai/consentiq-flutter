@@ -203,6 +203,7 @@ class FakeServer {
     int submitStatus = 200,
     Map<String, dynamic>? submitBody,
     List<int>? submitStatuses,
+    this.onSubmit,
   })  : _submitStatuses = submitStatuses,
         _config = config ?? configJson(),
         _consent = consent ?? const {'consent': null},
@@ -221,6 +222,8 @@ class FakeServer {
   // Answers each submit in turn; the last status repeats.
   final List<int>? _submitStatuses;
   final List<RecordedRequest> requests = [];
+  // Runs while a submit is in flight, before its answer is returned.
+  final Future<void> Function()? onSubmit;
 
   List<RecordedRequest> get submits =>
       requests.where((r) => r.method == 'POST').toList();
@@ -232,6 +235,7 @@ class FakeServer {
           return jsonResponse(_config, _configStatus);
         }
         if (path == '/api/public/consent' && request.method == 'POST') {
+          await onSubmit?.call();
           final statuses = _submitStatuses;
           if (statuses != null) {
             final status = statuses[
