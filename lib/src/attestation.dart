@@ -91,20 +91,17 @@ class AppAttestation {
         default:
           return const {};
       }
-    } on PlatformException {
-      return const {};
-    } on MissingPluginException {
-      return const {};
-    } on TimeoutException {
+    } catch (_) {
+      // Proof is best effort: any failure here sends no headers, and the
+      // server answers with the captcha instead of losing the submission.
       return const {};
     }
   }
 
   Future<Map<String, String>> _playIntegrity(String body) async {
-    final project = playIntegrityCloudProjectNumber;
-    if (project == null) return const {};
     final token = await _invoke<String>('playIntegrityToken', {
-      'cloudProjectNumber': project,
+      if (playIntegrityCloudProjectNumber != null)
+        'cloudProjectNumber': playIntegrityCloudProjectNumber,
       'body': body,
     });
     return token == null || token.isEmpty ? const {} : {integrityHeader: token};

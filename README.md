@@ -89,7 +89,7 @@ Pass a `ConsentIQConfig` to `ConsentIQ`.
 | `language` | property default | Language for the sheet, for example `en` or `ar`. |
 | `autoShow` | `true` | Show the sheet on init when no consent is recorded. |
 | `debug` | `false` | Verbose logging prefixed `[ConsentIQ]`. Turn it on in debug builds only. |
-| `playIntegrityCloudProjectNumber` | `null` | The Google Cloud project number linked to your app in Play Console. Turns on Play Integrity on Android, see [App attestation](#app-attestation). |
+| `playIntegrityCloudProjectNumber` | `null` | Only for an app also distributed outside Google Play: the Google Cloud project number linked to it. A Play app needs none, see [App attestation](#app-attestation). |
 | `identityToken` | `null` | Your server's signature for this person, sent with every submission. ConsentIQ verifies it and marks the record verified by your organization. Sign it on your server, never in the app. `FormConsent` takes the same parameter. |
 
 ### State and operations
@@ -188,7 +188,7 @@ In tests, pass a `captchaTokenSource` to `ConsentIQ` or `FormConsent` so no web 
 Each submission proves it comes from your app, so ConsentIQ can tell it from a script claiming to be it.
 
 - **iOS: App Attest.** Once per install the SDK generates an App Attest key, registers it with ConsentIQ, then signs each submission's exact body. Add the App Attest capability to the Runner target (entitlement `com.apple.developer.devicecheck.appattest-environment`, `production` for App Store builds), and enter your Team ID and bundle ID in the property's settings.
-- **Android: Play Integrity.** With `playIntegrityCloudProjectNumber` set, each submission carries a Play Integrity token bound to its exact body. Link the Cloud project to your app in Play Console, then download the response encryption keys (Play Console, App integrity) and enter them with your package name and signing certificate digest in the property's settings.
+- **Android: Play Integrity.** Each submission carries a Play Integrity token from a classic request, whose nonce is the SHA-256 of its exact body. To turn the check on, in Play Console (App integrity) choose to manage and download your own response encryption keys for classic requests, then enter the decryption and verification keys with your package name and signing certificate digest in the property's settings. ConsentIQ verifies tokens with those keys and never calls Google. Classic requests have a daily quota (10,000 a day by default; you can ask Google for more in Play Console); once it is spent, submissions fall back to the captcha.
 
 Where attestation cannot run (simulators, emulators, devices without Google Play services, no project number), nothing is sent and ConsentIQ asks for the [captcha](#captcha) instead.
 

@@ -263,9 +263,11 @@ void main() {
           {'cloudProjectNumber': 1234, 'body': '{"a":1}'});
     });
 
-    test('without a cloud project number sends nothing', () async {
-      expect(await attestation(FakeServer()).headers('x'), isEmpty);
-      expect(calls, isEmpty);
+    test('a Play app needs no cloud project number', () async {
+      final headers = await attestation(FakeServer()).headers('{"a":1}');
+
+      expect(headers, {'X-ConsentIQ-Integrity': 'integrity-token'});
+      expect(calls.single.arguments, {'body': '{"a":1}'});
     });
 
     test('a Play Integrity call that never answers sends nothing', () async {
@@ -314,7 +316,6 @@ void main() {
         server: client,
         apiUrl: testApiUrl,
         propertyKey: testPropertyKey,
-        playIntegrityCloudProjectNumber: 1,
       );
 
       await client.submitConsent(subjectId: 's', cookieConsents: {});

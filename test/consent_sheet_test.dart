@@ -1,7 +1,9 @@
 import 'package:consentiq/consentiq.dart';
+import 'package:consentiq/src/attestation.dart';
 import 'package:consentiq/src/consent_sheet.dart'
     show isLightHex, tryParseHexColor;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -47,7 +49,15 @@ Future<ConsentIQ> pumpApp(
 }
 
 void main() {
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    // No Play Integrity in these tests: answer at once rather than wait out
+    // the attestation timeout in fake time.
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+            const MethodChannel(attestChannel), (_) async => null);
+  });
 
   group('noticeUriWithLanguage', () {
     test('appends lang with ? or & and keeps the fragment', () {

@@ -95,9 +95,8 @@ class ConsentIQConfig {
   /// organization. Sign it on your server, never in the app.
   final String? identityToken;
 
-  /// The Google Cloud project number linked to the app in Play Console. It
-  /// turns on Play Integrity on Android; without it ConsentIQ asks Android
-  /// submissions for a captcha instead.
+  /// Only for an app also distributed outside Google Play: the Google Cloud
+  /// project number linked to it. A Play app needs none.
   final int? playIntegrityCloudProjectNumber;
 
   /// Fires after every recorded write.
