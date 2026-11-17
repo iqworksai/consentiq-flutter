@@ -662,6 +662,14 @@ class ConsentIQ extends ChangeNotifier {
       }
     }
     _consentFound = true;
+    if (decision.recorded) {
+      await _storage.clearUnrecorded();
+    } else {
+      // A resend could not carry the TC string, so an unrecorded decision is
+      // not kept: it holds for this session and the next launch asks again.
+      await _dropUnrecordedDecision();
+      await _storage.clearTcf();
+    }
     session.release();
     if (_disposed) return;
     _notify();
@@ -674,6 +682,16 @@ class ConsentIQ extends ChangeNotifier {
         options.onReject?.call(ConsentRejectEvent(consent: this.consent));
       default:
         options.onSave?.call(ConsentSaveEvent(consent: this.consent));
+    }
+    if (!decision.recorded) {
+      final status = decision.recordStatus;
+      options.onError?.call(ConsentIQError(
+        source: 'consent',
+        code: 'refused',
+        message: 'TCF decision not recorded'
+            '${status == null ? '' : ' (status $status)'}',
+      ));
+      return;
     }
     options.onConsentChange?.call(
       Map.unmodifiable(_consent),

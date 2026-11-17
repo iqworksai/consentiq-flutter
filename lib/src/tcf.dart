@@ -61,6 +61,8 @@ class TcfDecision extends TcfMessage {
     required this.stored,
     this.consent,
     this.scope,
+    this.recorded = true,
+    this.recordStatus,
   });
 
   final String tcString;
@@ -71,6 +73,12 @@ class TcfDecision extends TcfMessage {
   /// `all`, `none` or `custom`: accepted all, rejected all, or saved a
   /// selection. Null when the page sent none.
   final String? scope;
+
+  /// False when ConsentIQ holds no record of this decision.
+  final bool recorded;
+
+  /// The record's HTTP status; null when the server never answered.
+  final int? recordStatus;
 }
 
 class TcfError extends TcfMessage {
@@ -129,6 +137,8 @@ TcfMessage? parseTcfMessage(String raw, {required String? token}) {
           final String s when s == 'all' || s == 'none' || s == 'custom' => s,
           _ => null,
         },
+        recorded: asBool(data['recorded'], true),
+        recordStatus: asIntOrNull(data['recordStatus']),
       );
     case 'error':
       return TcfError(asStringOrNull(data['code']) ?? 'error');

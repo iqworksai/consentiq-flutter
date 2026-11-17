@@ -75,6 +75,8 @@ Map<String, Object?> decisionMessage({
     'marketing': false,
   },
   String? scope = 'custom',
+  bool? recorded,
+  int? recordStatus,
 }) =>
     {
       'type': 'decision',
@@ -83,6 +85,8 @@ Map<String, Object?> decisionMessage({
       'stored': storedRecord,
       'consent': consent,
       if (scope != null) 'scope': scope,
+      if (recorded != null) 'recorded': recorded,
+      if (recordStatus != null) 'recordStatus': recordStatus,
     };
 
 Map<String, dynamic> startOptions(String script) {
@@ -425,6 +429,19 @@ void main() {
       }
     });
 
+    test('a decision reads recorded and its status, recorded by default', () {
+      final plain = parse(decisionMessage()) as TcfDecision;
+      expect(plain.recorded, isTrue);
+      expect(plain.recordStatus, isNull);
+      final refused = parse(decisionMessage(recorded: false, recordStatus: 403))
+          as TcfDecision;
+      expect(refused.recorded, isFalse);
+      expect(refused.recordStatus, 403);
+      final unanswered = parse(decisionMessage(recorded: false)) as TcfDecision;
+      expect(unanswered.recorded, isFalse);
+      expect(unanswered.recordStatus, isNull);
+    });
+
     test('after start only messages echoing the run token count', () {
       for (final token in [null, 'other-token', 7]) {
         final raw = jsonEncode({'type': 'show', 'token': token});
@@ -725,6 +742,72 @@ void main() {
       expect(changes.single, containsPair('analytics', true));
       expect(server.submits, isEmpty);
       expect(consentIQ.isSheetVisible, isFalse);
+    });
+
+    Future<(ConsentIQ, FakeWebViewController)> shownTcf(
+        ConsentIQConfig options) async {
+      final consentIQ = build(tcfServer(), options: options);
+      await consentIQ.init();
+      await pumpEventQueue();
+      final web = platform.controllers.last;
+      web.post({'type': 'ready'});
+      await pumpEventQueue();
+      web.answer({'type': 'show'});
+      await pumpEventQueue();
+      return (consentIQ, web);
+    }
+
+    test('an unrecorded decision holds for the session, is dropped and told',
+        () async {
+      for (final status in [403, null]) {
+        SharedPreferences.setMockInitialValues({});
+        final errors = <ConsentIQError>[];
+        final changes = <Map<String, bool>>[];
+        final saves = <ConsentSaveEvent>[];
+        final (consentIQ, web) = await shownTcf(ConsentIQConfig(
+          propertyKey: testPropertyKey,
+          onError: errors.add,
+          onSave: saves.add,
+          onConsentChange: (consent, _) => changes.add(consent),
+        ));
+
+        web.answer(decisionMessage(recorded: false, recordStatus: status));
+        await pumpEventQueue();
+
+        expect(keys.store['IABTCF_TCString'], 'CQ-tc-string',
+            reason: '$status');
+        expect(consentIQ.hasConsent('analytics'), isTrue);
+        final prefs = await SharedPreferences.getInstance();
+        expect(prefs.getString('consentiq_tcf'), isNull);
+        expect(prefs.getString('consentiq_consent'), isNull);
+        expect(prefs.getString('consentiq_pending'), isNull);
+        expect(
+            prefs.getString('consentiq_unrecorded_decision'), testPropertyKey);
+        expect(saves, hasLength(1));
+        expect(changes, isEmpty);
+        expect(errors.single.source, 'consent');
+        expect(errors.single.code, 'refused');
+        expect(
+            errors.single.message,
+            status == null
+                ? 'TCF decision not recorded'
+                : 'TCF decision not recorded (status $status)');
+        consentIQ.dispose();
+      }
+    });
+
+    test('a recorded decision clears the unrecorded marker', () async {
+      SharedPreferences.setMockInitialValues(
+          {'consentiq_unrecorded_decision': testPropertyKey});
+      final (_, web) =
+          await shownTcf(const ConsentIQConfig(propertyKey: testPropertyKey));
+
+      web.answer(decisionMessage(recorded: true));
+      await pumpEventQueue();
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('consentiq_unrecorded_decision'), isNull);
+      expect(jsonDecode(prefs.getString('consentiq_tcf')!), storedRecord);
     });
 
     test('a decision fires onAccept, onReject or onSave by its scope',
