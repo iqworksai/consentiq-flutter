@@ -225,8 +225,10 @@ class FakeServer {
   // Runs while a submit is in flight, before its answer is returned.
   final Future<void> Function()? onSubmit;
 
-  List<RecordedRequest> get submits =>
-      requests.where((r) => r.method == 'POST').toList();
+  List<RecordedRequest> get submits => requests
+      .where((r) =>
+          r.method == 'POST' && r.request.url.path == '/api/public/consent')
+      .toList();
 
   http.Client get client => MockClient((request) async {
         requests.add(RecordedRequest(request, request.body));

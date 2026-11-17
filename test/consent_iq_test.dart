@@ -239,15 +239,59 @@ void main() {
         options: const ConsentIQConfig(
           propertyKey: testPropertyKey,
           subjectId: 'app-user-42',
+          identityToken: 'v2.1.sig',
         ),
       );
 
       await consentIQ.init();
 
       expect(consentIQ.subjectId, 'app-user-42');
-      expect(server.requests.last.url, endsWith('/app-user-42'));
+      final restore = server.requests.last;
+      expect(restore.url, endsWith('/app-user-42'));
+      expect(restore.method, 'POST');
+      expect(restore.json['identityToken'], 'v2.1.sig');
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString('consentiq_subject_id'), isNull);
+    });
+
+    test('a supplied subject without a token is not looked up', () async {
+      SharedPreferences.setMockInitialValues({
+        'consentiq_consent': jsonEncode({'necessary': true, 'analytics': true}),
+      });
+      final server = FakeServer();
+      final consentIQ = build(
+        server,
+        options: const ConsentIQConfig(
+          propertyKey: testPropertyKey,
+          subjectId: 'app-user-42',
+        ),
+      );
+
+      await consentIQ.init();
+
+      expect(
+        server.requests.where((r) => r.url.contains('/api/public/consent/')),
+        isEmpty,
+      );
+      expect(consentIQ.consent['analytics'], isTrue);
+    });
+
+    test('a generated subject is still looked up without a token', () async {
+      final server = FakeServer();
+      final consentIQ = build(
+        server,
+        options: const ConsentIQConfig(
+          propertyKey: testPropertyKey,
+          identityToken: 'v2.1.sig',
+        ),
+      );
+
+      await consentIQ.init();
+
+      final restore = server.requests
+          .singleWhere((r) => r.url.contains('/api/public/consent/'));
+      expect(restore.method, 'GET');
+      expect(consentIQ.subjectId, isNotNull);
     });
 
     test('autoGenerateSubjectId false skips the consent lookup', () async {

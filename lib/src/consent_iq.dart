@@ -161,11 +161,19 @@ class ConsentIQ extends ChangeNotifier {
   }
 
   Future<bool> _restoreConsent(String sid) async {
+    // An id the app chose is read only with its identity token; without one
+    // the local copy stands, since the open lookup reads only ids this SDK
+    // generated.
+    final siteSubject = _subjectSource != null;
+    final identityToken = options.identityToken;
     ConsentLookup? lookup;
-    try {
-      lookup = await _api.getConsent(sid);
-    } catch (e) {
-      _logger.warn('Failed to load consent, using local cache', e);
+    if (!siteSubject || identityToken != null) {
+      try {
+        lookup = await _api.getConsent(sid,
+            identityToken: siteSubject ? identityToken : null);
+      } catch (e) {
+        _logger.warn('Failed to load consent, using local cache', e);
+      }
     }
     final saved = lookup?.consent;
     _serverConsentedAt =

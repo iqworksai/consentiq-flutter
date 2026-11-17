@@ -58,12 +58,19 @@ class ConsentIQApiClient implements AttestationServer {
     return PropertyConfig.fromJson(json);
   }
 
-  Future<ConsentLookup> getConsent(String subjectId) async {
+  /// The stored consent for [subjectId]. An id the app chose is read with its
+  /// [identityToken], from the records ConsentIQ verified; an id this SDK
+  /// generated is read without one.
+  Future<ConsentLookup> getConsent(
+    String subjectId, {
+    String? identityToken,
+  }) async {
     _logger.log('Fetching consent');
-    final json = await _get(
-      '/api/public/consent/${Uri.encodeComponent(propertyKey)}'
-      '/${Uri.encodeComponent(subjectId)}',
-    );
+    final path = '/api/public/consent/${Uri.encodeComponent(propertyKey)}'
+        '/${Uri.encodeComponent(subjectId)}';
+    final json = identityToken == null
+        ? await _get(path)
+        : await _post(path, jsonEncode({'identityToken': identityToken}));
     final lookup = ConsentLookup.fromJson(json);
     _logger.log(
       lookup.consent == null
