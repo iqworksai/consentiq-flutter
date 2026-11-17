@@ -110,10 +110,7 @@ class ConsentIQ extends ChangeNotifier {
 
   Future<void> _initialize() async {
     try {
-      _subjectId = options.subjectId ??
-          (options.autoGenerateSubjectId
-              ? await _storage.getOrCreateSubjectId()
-              : null);
+      _subjectId = await _resolveSubjectId();
 
       final config = await _api.getConfig();
       _config = config;
@@ -311,11 +308,30 @@ class ConsentIQ extends ChangeNotifier {
     _resetGeneration++;
     await _clearTcfDecision();
     await _storage.clearAll();
-    _subjectId = options.subjectId ??
-        (options.autoGenerateSubjectId
-            ? await _storage.getOrCreateSubjectId()
-            : null);
+    _subjectId = await _resolveSubjectId();
   }
+
+  Future<String?> _resolveSubjectId() async {
+    final supplied = options.subjectId;
+    if (supplied != null) {
+      if (isValidSubjectId(supplied)) return supplied;
+      _logger.warn(invalidSubjectIdMessage);
+      options.onError?.call(const ConsentIQError(
+          source: 'config',
+          code: 'invalid-subject-id',
+          message: invalidSubjectIdMessage));
+      return null;
+    }
+    return options.autoGenerateSubjectId
+        ? await _storage.getOrCreateSubjectId()
+        : null;
+  }
+
+  /// `site` when the subject id in use is the app's own, not a generated one.
+  String? get _subjectSource =>
+      options.subjectId != null && _subjectId == options.subjectId
+          ? siteSubjectSource
+          : null;
 
   Future<void> _submit() async {
     // The sheet stood in for the TCF page, so the last TC string no longer
@@ -357,6 +373,7 @@ class ConsentIQ extends ChangeNotifier {
           consentMethod: 'sdk',
           captchaToken: token,
           identityToken: options.identityToken,
+          subjectSource: _subjectSource,
         ),
       );
       await _storage.clearPending();
@@ -438,6 +455,7 @@ class ConsentIQ extends ChangeNotifier {
         marketingConsents: pending.marketingConsents,
         consentMethod: 'sdk',
         identityToken: options.identityToken,
+        subjectSource: _subjectSource,
       );
     } on ConsentIQApiException catch (e) {
       _logger.log('Pending consent not recorded: ${e.message}');
@@ -478,6 +496,7 @@ class ConsentIQ extends ChangeNotifier {
       session.reopen = reopen && stored != null;
       await session.start(
         subjectId: _subjectId ?? '',
+        subjectSource: _subjectSource,
         stored: stored,
         consent: stored == null ? null : Map.of(_consent),
       );

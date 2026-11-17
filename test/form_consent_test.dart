@@ -26,6 +26,19 @@ FakeServer captchaServer() => FakeServer(
 
 void main() {
   group('FormConsent', () {
+    test('marks its subject as the site\'s, and refuses one with a colon',
+        () async {
+      final server = FakeServer();
+      final form = buildForm(server)..setChannel('email', true);
+      await form.submit();
+      expect(server.submits.single.json['subjectSource'], 'site');
+
+      expect(
+        () => FormConsent(propertyKey: testPropertyKey, subjectId: 'site:u1'),
+        throwsArgumentError,
+      );
+    });
+
     test('defaults every channel to false', () {
       final form = FormConsent(propertyKey: testPropertyKey, subjectId: 'u1');
 
@@ -85,6 +98,7 @@ void main() {
       expect(server.submits.single.json, {
         'propertyKey': testPropertyKey,
         'subjectId': 'user-7',
+        'subjectSource': 'site',
         'subjectType': 'user',
         'marketingConsents': {
           'email': true,

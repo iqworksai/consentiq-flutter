@@ -47,6 +47,10 @@ class FormConsent extends ChangeNotifier {
         _ownsApi = apiClient == null,
         _captchaTokenSource = captchaTokenSource,
         _logger = ConsentIQLogger(debug: debug) {
+    if (!isValidSubjectId(subjectId)) {
+      throw ArgumentError.value(
+          subjectId, 'subjectId', invalidSubjectIdMessage);
+    }
     _consents = _cleared();
     _api.attestation ??= AppAttestation(
       server: _api,
@@ -117,6 +121,7 @@ class FormConsent extends ChangeNotifier {
           consentMethod: 'form',
           captchaToken: token,
           identityToken: identityToken,
+          subjectSource: siteSubjectSource,
         ),
       );
       final result = FormConsentResult(

@@ -1,5 +1,6 @@
 ## Unreleased
 
+- A subject id you supply (`ConsentIQConfig.subjectId`, `FormConsent`) is sent with `subjectSource: "site"` on every write, and to the in-app TCF page, so ConsentIQ stores it apart from the ids the SDK generates. A supplied id containing `:` is refused: `init()` reports a `ConsentIQError` (`config`, `invalid-subject-id`) through `onError` and keeps consent local, and `FormConsent` throws an `ArgumentError`.
 - When ConsentIQ answers a submission with `428 captcha_required`, which it can do on any property when a submission looks automated, the SDK solves one Cloudflare Turnstile challenge and submits once more. `FormConsent.submit()` does the same.
 - The captcha page is loaded with the property key, so a token is accepted only for that property.
 - A challenge stays hidden unless Cloudflare asks for interaction; then it is shown over the app with a close button. Once shown it waits up to 2 minutes. Closing it, a failure or a timeout sends nothing more, keeps the local choice and logs the usual captcha warning.

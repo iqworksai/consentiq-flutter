@@ -627,6 +627,25 @@ void main() {
       });
     });
 
+    test('an app-chosen subject starts the page marked site', () async {
+      final consentIQ = build(
+        tcfServer(),
+        options: const ConsentIQConfig(
+          propertyKey: testPropertyKey,
+          subjectId: 'user-42',
+        ),
+      );
+      await consentIQ.init();
+      await pumpEventQueue();
+      final web = platform.controllers.single;
+      web.post({'type': 'ready'});
+      await pumpEventQueue();
+
+      final options = startOptions(web.scripts.single);
+      expect(options['subjectId'], 'user-42');
+      expect(options['subjectSource'], 'site');
+    });
+
     test('current: gdprApplies 1, page released, no UI', () async {
       SharedPreferences.setMockInitialValues({
         'consentiq_tcf': jsonEncode(storedRecord),

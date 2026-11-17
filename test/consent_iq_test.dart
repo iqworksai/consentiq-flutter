@@ -562,6 +562,46 @@ void main() {
       expect(plain.submits.single.json.containsKey('identityToken'), isFalse);
     });
 
+    test('an app-chosen subject is marked site, a generated one is not',
+        () async {
+      final server = FakeServer();
+      final site = build(
+        server,
+        options: const ConsentIQConfig(
+          propertyKey: testPropertyKey,
+          subjectId: 'user-42',
+        ),
+      );
+      await site.init();
+      await site.acceptAll();
+      final generated = build(server);
+      await generated.init();
+      await generated.acceptAll();
+
+      expect(server.submits.first.json['subjectSource'], 'site');
+      expect(server.submits.last.json.containsKey('subjectSource'), isFalse);
+    });
+
+    test('an app-chosen subject id with a colon is refused at init', () async {
+      final server = FakeServer();
+      final errors = <ConsentIQError>[];
+      final consentIQ = build(
+        server,
+        options: ConsentIQConfig(
+          propertyKey: testPropertyKey,
+          subjectId: 'site:user-42',
+          onError: errors.add,
+        ),
+      );
+      await consentIQ.init();
+      await consentIQ.acceptAll();
+
+      expect(consentIQ.subjectId, isNull);
+      expect(server.submits, isEmpty);
+      expect(errors.single.source, 'config');
+      expect(errors.single.code, 'invalid-subject-id');
+    });
+
     test('no captcha required: token source unused, no captchaToken key',
         () async {
       for (final config in [

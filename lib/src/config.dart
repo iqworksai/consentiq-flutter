@@ -23,6 +23,17 @@ class ConsentSaveEvent {
 }
 
 /// A failure the SDK recovered from. The app keeps running.
+/// Sent as `subjectSource` with a subject id the app chose, never with one
+/// the SDK generated.
+const String siteSubjectSource = 'site';
+
+/// ConsentIQ refuses a subject id containing ':', which would let it pose as
+/// an id of another kind.
+const String invalidSubjectIdMessage =
+    "ConsentIQ subjectId may not contain ':'";
+
+bool isValidSubjectId(String subjectId) => !subjectId.contains(':');
+
 class ConsentIQError {
   const ConsentIQError({
     required this.source,
@@ -31,11 +42,11 @@ class ConsentIQError {
   });
 
   /// What failed: `tcf` for the IAB TCF page and its keys, `consent` for a
-  /// submission ConsentIQ refused.
+  /// submission ConsentIQ refused, `config` for an option it cannot use.
   final String source;
 
   /// The failure, such as `timeout`, `load`, `key-store`, the hosted page's
-  /// own code, or `refused` for a 403.
+  /// own code, `refused` for a 403, or `invalid-subject-id`.
   final String code;
 
   /// The server's own words, when it gave any.
@@ -79,7 +90,9 @@ class ConsentIQConfig {
   final String apiUrl;
 
   /// A subject id supplied by the app. When null and [autoGenerateSubjectId]
-  /// is true, a UUID is generated once and persisted.
+  /// is true, a UUID is generated once and persisted. It may not contain
+  /// ':'. The SDK marks it as the app's own (`subjectSource: "site"`), so
+  /// ConsentIQ keeps it apart from generated ids.
   final String? subjectId;
   final bool autoGenerateSubjectId;
 

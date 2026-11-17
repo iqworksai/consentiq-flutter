@@ -85,10 +85,12 @@ class ConsentIQApiClient implements AttestationServer {
     String? consentVersion,
     String? captchaToken,
     String? identityToken,
+    String? subjectSource,
   }) async {
     final body = <String, Object?>{
       'propertyKey': propertyKey,
       'subjectId': subjectId,
+      if (subjectSource != null) 'subjectSource': subjectSource,
       if (subjectType != null) 'subjectType': subjectType,
       if (cookieConsents != null) 'cookieConsents': cookieConsents,
       if (marketingConsents != null) 'marketingConsents': marketingConsents,
