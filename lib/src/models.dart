@@ -43,6 +43,7 @@ class BannerConfig {
     this.cookieIconUrl,
     this.overlay = false,
     this.noticeUrl,
+    this.noticeVersion,
     this.bannerBgColor,
     this.bannerTextColor,
   });
@@ -59,6 +60,7 @@ class BannerConfig {
         cookieIconUrl: asStringOrNull(json['cookieIconUrl']),
         overlay: asBool(json['overlay']),
         noticeUrl: asStringOrNull(json['noticeUrl']),
+        noticeVersion: asIntOrNull(json['noticeVersion']),
         bannerBgColor: asStringOrNull(json['bannerBgColor']),
         bannerTextColor: asStringOrNull(json['bannerTextColor']),
       );
@@ -80,6 +82,9 @@ class BannerConfig {
 
   /// Absolute URL of the cookie notice this banner is bound to.
   final String? noticeUrl;
+
+  /// The version of that notice, which a resent decision carries.
+  final int? noticeVersion;
 
   /// Hex background and text colors set in the dashboard editor. Older
   /// servers send neither.

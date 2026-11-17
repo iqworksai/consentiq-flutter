@@ -93,6 +93,7 @@ class ConsentIQApiClient implements AttestationServer {
     String? captchaToken,
     String? identityToken,
     String? subjectSource,
+    int? noticeVersion,
   }) async {
     final body = <String, Object?>{
       'propertyKey': propertyKey,
@@ -108,6 +109,7 @@ class ConsentIQApiClient implements AttestationServer {
       if (consentVersion != null) 'consentVersion': consentVersion,
       if (captchaToken != null) 'captchaToken': captchaToken,
       if (identityToken != null) 'identityToken': identityToken,
+      if (noticeVersion != null) 'noticeVersion': noticeVersion,
     };
     _logger.log('Submitting consent ($consentMethod)');
     final encoded = jsonEncode(body);

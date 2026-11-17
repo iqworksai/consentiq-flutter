@@ -650,6 +650,8 @@ void main() {
       SharedPreferences.setMockInitialValues({
         'consentiq_tcf': jsonEncode(storedRecord),
         'consentiq_consent': jsonEncode({'necessary': true, 'analytics': true}),
+        'consentiq_subject_id': 'sid-1',
+        'consentiq_consent_subject': 'sid-1',
       });
       var opened = 0;
       final consentIQ = build(

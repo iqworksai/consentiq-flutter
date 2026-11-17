@@ -5,6 +5,7 @@ import 'attestation.dart';
 import 'captcha.dart';
 import 'config.dart';
 import 'consent_state.dart';
+import 'identity.dart';
 import 'log.dart';
 import 'models.dart';
 
@@ -36,6 +37,7 @@ class FormConsent extends ChangeNotifier {
     ConsentIQApiClient? apiClient,
     CaptchaTokenSource? captchaTokenSource,
     this.identityToken,
+    this.identityFor,
     int? playIntegrityCloudProjectNumber,
     bool debug = false,
   })  : _api = apiClient ??
@@ -47,10 +49,6 @@ class FormConsent extends ChangeNotifier {
         _ownsApi = apiClient == null,
         _captchaTokenSource = captchaTokenSource,
         _logger = ConsentIQLogger(debug: debug) {
-    if (!isValidSubjectId(subjectId)) {
-      throw ArgumentError.value(
-          subjectId, 'subjectId', invalidSubjectIdMessage);
-    }
     _consents = _cleared();
     _api.attestation ??= AppAttestation(
       server: _api,
@@ -64,6 +62,12 @@ class FormConsent extends ChangeNotifier {
 
   /// Your server's signature for this person, sent with the form unread.
   final String? identityToken;
+
+  /// The identifier [identityToken] was signed for. When [subjectId] is that
+  /// identifier written differently (an email's case, a phone's spacing) the
+  /// signed form is sent; any other subject goes unsigned, since the token
+  /// cannot verify for it.
+  final String? identityFor;
 
   /// `visitor`, `user` or `subscriber`.
   final String subjectType;
@@ -94,9 +98,14 @@ class FormConsent extends ChangeNotifier {
   }
 
   /// Posts the current selection. Returns null when the subject id is empty or
-  /// the request fails; the failure is logged.
+  /// contains ':', or the request fails; the failure is logged.
   Future<FormConsentResult?> submit() async {
     if (subjectId.isEmpty) return null;
+    if (!isValidSubjectId(subjectId)) {
+      _logger.warn(invalidSubjectIdMessage);
+      return null;
+    }
+    final signed = signedSubject(identityToken, identityFor, subjectId);
     _isSubmitting = true;
     notifyListeners();
     try {
@@ -115,12 +124,12 @@ class FormConsent extends ChangeNotifier {
         firstToken: captchaToken,
         tokenSource: tokenSource,
         send: (token) => _api.submitConsent(
-          subjectId: subjectId,
+          subjectId: signed.subjectId,
           subjectType: subjectType,
           marketingConsents: Map.of(_consents),
           consentMethod: 'form',
           captchaToken: token,
-          identityToken: identityToken,
+          identityToken: signed.identityToken,
           subjectSource: siteSubjectSource,
         ),
       );

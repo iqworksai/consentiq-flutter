@@ -33,10 +33,11 @@ void main() {
       await form.submit();
       expect(server.submits.single.json['subjectSource'], 'site');
 
-      expect(
-        () => FormConsent(propertyKey: testPropertyKey, subjectId: 'site:u1'),
-        throwsArgumentError,
-      );
+      final refused =
+          await FormConsent(propertyKey: testPropertyKey, subjectId: 'site:u1')
+              .submit();
+      expect(refused, isNull);
+      expect(server.submits, hasLength(1));
     });
 
     test('defaults every channel to false', () {
@@ -244,6 +245,44 @@ void main() {
       form.reset();
 
       expect(form.consents.values.every((v) => v == false), isTrue);
+    });
+  });
+
+  group('FormConsent identity pairing', () {
+    test(
+        'sends the signed identifier when the subject is it written '
+        'differently', () async {
+      final server = FakeServer();
+      await FormConsent(
+        propertyKey: testPropertyKey,
+        subjectId: 'Alice@Example.com',
+        identityToken: 'v2.1.sig',
+        identityFor: 'alice@example.com',
+        apiClient: ConsentIQApiClient(
+            propertyKey: testPropertyKey,
+            apiUrl: testApiUrl,
+            client: server.client),
+      ).submit();
+      final post = server.submits.single.json;
+      expect(post['subjectId'], 'alice@example.com');
+      expect(post['identityToken'], 'v2.1.sig');
+    });
+
+    test('sends another subject unsigned', () async {
+      final server = FakeServer();
+      await FormConsent(
+        propertyKey: testPropertyKey,
+        subjectId: 'bob@example.com',
+        identityToken: 'v2.1.sig',
+        identityFor: 'alice@example.com',
+        apiClient: ConsentIQApiClient(
+            propertyKey: testPropertyKey,
+            apiUrl: testApiUrl,
+            client: server.client),
+      ).submit();
+      final post = server.submits.single.json;
+      expect(post['subjectId'], 'bob@example.com');
+      expect(post.containsKey('identityToken'), isFalse);
     });
   });
 }

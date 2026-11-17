@@ -220,6 +220,7 @@ class TcfSession {
   Future<void> start({
     required String subjectId,
     String? subjectSource,
+    String? identityToken,
     required Map<String, dynamic>? stored,
     required ConsentState? consent,
   }) async {
@@ -228,6 +229,7 @@ class TcfSession {
     final options = jsonEncode({
       'subjectId': subjectId,
       if (subjectSource != null) 'subjectSource': subjectSource,
+      if (identityToken != null) 'identityToken': identityToken,
       'stored': stored,
       'consent': consent,
       'reopen': reopen,

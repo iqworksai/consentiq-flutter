@@ -120,8 +120,20 @@ class ConsentIQ extends ChangeNotifier {
       var found = false;
       final sid = _subjectId;
       if (sid != null && sid.isNotEmpty) {
-        found = await _restoreConsent(sid);
-        if (await _resendPending(sid)) found = true;
+        // A decision dropped unrecorded leaves nothing granted: neither an older
+        // server record nor the local copy answers for it, so the sheet asks
+        // again.
+        if (!await _storage.isUnrecorded(options.propertyKey)) {
+          found = await _restoreConsent(sid);
+        }
+        switch (await _resendPending(sid)) {
+          case _ResendOutcome.recorded:
+            found = true;
+          case _ResendOutcome.dropped:
+            found = false;
+          case _ResendOutcome.none:
+            break;
+        }
       }
 
       _consentFound = found;
@@ -164,13 +176,21 @@ class ConsentIQ extends ChangeNotifier {
     // An id the app chose is read only with its identity token; without one
     // the local copy stands, since the open lookup reads only ids this SDK
     // generated.
-    final siteSubject = _subjectSource != null;
-    final identityToken = options.identityToken;
     ConsentLookup? lookup;
-    if (!siteSubject || identityToken != null) {
+    if (_subjectSource == null || options.identityToken != null) {
       try {
-        lookup = await _api.getConsent(sid,
-            identityToken: siteSubject ? identityToken : null);
+        lookup = await _api.getConsent(sid, identityToken: _identityToken);
+      } on ConsentIQApiException catch (e) {
+        if (e.statusCode == 403) {
+          // The token did not verify for this subject, so this device's copy
+          // cannot answer for them: the sheet asks again, and the app is told.
+          _logger.warn('Consent lookup refused', e);
+          await _storage.clearConsent();
+          options.onError?.call(ConsentIQError(
+              source: 'consent', code: 'refused', message: e.message));
+          return false;
+        }
+        _logger.warn('Failed to load consent, using local cache', e);
       } catch (e) {
         _logger.warn('Failed to load consent, using local cache', e);
       }
@@ -183,7 +203,7 @@ class ConsentIQ extends ChangeNotifier {
       if (saved.marketingConsents != null) {
         _marketingConsent = Map.of(saved.marketingConsents!);
       }
-      await _storage.saveConsent(_consent);
+      await _storage.saveConsentFor(_consent, sid);
       return true;
     }
     if (lookup?.expired == true) {
@@ -191,7 +211,7 @@ class ConsentIQ extends ChangeNotifier {
       await _clearTcfDecision();
       return false;
     }
-    final cached = await _storage.loadConsent();
+    final cached = await _storage.loadConsentFor(sid);
     if (cached != null) {
       _consent = cached;
       return true;
@@ -341,6 +361,17 @@ class ConsentIQ extends ChangeNotifier {
           ? siteSubjectSource
           : null;
 
+  /// The identity token, only where it can verify: with the app's own subject
+  /// id. A generated id is random, so a token signed for the app's user never
+  /// matches it.
+  String? get _identityToken =>
+      _subjectSource != null ? options.identityToken : null;
+
+  int? get _noticeVersion => _config?.banner.noticeVersion;
+
+  List<String> get _categoryCodes =>
+      (_config?.categories.map((c) => c.code).toList() ?? <String>[])..sort();
+
   Future<void> _submit() async {
     // The sheet stood in for the TCF page, so the last TC string no longer
     // matches what the visitor chose.
@@ -355,9 +386,11 @@ class ConsentIQ extends ChangeNotifier {
     }
     final cookieConsents = Map<String, bool>.of(_consent);
     final marketingConsents = Map<String, bool>.of(_marketingConsent);
-    // A new decision replaces any earlier one still waiting to be resent.
-    await _storage.clearPending();
-    final generation = _resetGeneration;
+    // The decision applies at once and stands locally; the server record makes
+    // it stand across launches.
+    await _storage.saveConsentFor(cookieConsents, sid);
+    final decision = _UnrecordedDecision(
+        cookieConsents, marketingConsents, sid, _resetGeneration);
     final config = _config;
     final tokenSource = _captchaTokenSource ??
         CaptchaController.forProperty(_api.apiUrl, options.propertyKey).token;
@@ -367,6 +400,7 @@ class ConsentIQ extends ChangeNotifier {
         captchaToken = await tokenSource();
       } catch (_) {
         _logger.warn(captchaFailedWarning);
+        await _settleFailure(null, captchaFailedWarning, decision);
         return;
       }
     }
@@ -380,80 +414,102 @@ class ConsentIQ extends ChangeNotifier {
           marketingConsents: marketingConsents,
           consentMethod: 'sdk',
           captchaToken: token,
-          identityToken: options.identityToken,
+          identityToken: _identityToken,
           subjectSource: _subjectSource,
         ),
       );
+      if (decision.generation != _resetGeneration) return;
       await _storage.clearPending();
-      await _storage.saveConsent(cookieConsents);
+      await _storage.clearUnrecorded();
       options.onConsentChange?.call(
         Map.unmodifiable(cookieConsents),
         Map.unmodifiable(marketingConsents),
       );
     } on CaptchaException {
       _logger.warn(captchaFailedWarning);
+      await _settleFailure(null, captchaFailedWarning, decision);
     } on ConsentIQApiException catch (e) {
       _logger.warn('Failed to submit consent', e);
-      await _handleRefusal(
-          e, cookieConsents, marketingConsents, sid, generation);
+      await _settleFailure(e.statusCode, e.message, decision);
     } catch (e) {
       _logger.warn('Failed to submit consent', e);
+      await _settleFailure(null, '$e', decision);
     }
   }
 
-  // 429 keeps the decision for one quiet retry per launch; a refusal resending
-  // cannot change drops it; 403 (an identity token that did not verify, or one
-  // the property requires) goes to the app.
-  Future<void> _handleRefusal(
-    ConsentIQApiException e,
-    ConsentState cookieConsents,
-    MarketingConsentState marketingConsents,
-    String subjectId,
-    int generation,
-  ) async {
+  // A submit ConsentIQ did not record. Retryable (no answer, a 5xx, a 429, an
+  // unanswered challenge) keeps it as the pending decision, replacing any
+  // earlier one. Anything else, or any failure on a property that requires a
+  // captcha on every submit (a resend cannot carry one), is final: the decision
+  // and its local copy are dropped, the next launch asks again, and the app is
+  // told.
+  Future<void> _settleFailure(
+      int? statusCode, String? message, _UnrecordedDecision decision) async {
+    // A submit that started before a reset belongs to the state the reset
+    // cleared.
+    if (decision.generation != _resetGeneration) return;
     final config = _config;
-    if (e.statusCode == 429 && !(config != null && requiresCaptcha(config))) {
-      if (generation != _resetGeneration) return;
-      await _storage.savePending(PendingDecision(
-        cookieConsents: cookieConsents,
-        marketingConsents: marketingConsents,
-        attempts: 0,
-        createdAt: clock(),
-        subjectId: subjectId,
-        propertyKey: options.propertyKey,
-        apiUrl: _api.apiUrl,
-      ));
-    } else if (e.statusCode == 403) {
-      await _refused(e);
-    } else if (dropsTheDecision(e.statusCode)) {
-      await _storage.clearPending();
+    if (isFinalStatus(statusCode) ||
+        (config != null && requiresCaptcha(config))) {
+      await _dropUnrecordedDecision();
+      options.onError?.call(
+        ConsentIQError(source: 'consent', code: 'refused', message: message),
+      );
+      return;
     }
+    await _storage.savePending(PendingDecision(
+      cookieConsents: decision.cookieConsents,
+      marketingConsents: decision.marketingConsents,
+      attempts: 0,
+      createdAt: clock(),
+      subjectId: decision.subjectId,
+      propertyKey: options.propertyKey,
+      apiUrl: _api.apiUrl,
+      noticeVersion: _noticeVersion,
+      categoryCodes: _categoryCodes,
+    ));
   }
 
-  Future<void> _refused(ConsentIQApiException e) async {
+  // The decision was never recorded and never will be: its local copy goes
+  // with it, and the next launch asks again with nothing granted rather than
+  // restoring an older choice.
+  Future<void> _dropUnrecordedDecision() async {
     await _storage.clearPending();
-    options.onError?.call(
-      ConsentIQError(source: 'consent', code: 'refused', message: e.message),
-    );
+    await _storage.clearConsent();
+    await _storage.markUnrecorded(options.propertyKey);
   }
 
-  // Resends a decision kept after a 429, once per launch and never with a
-  // captcha. True when it was recorded, so the sheet need not ask again.
-  Future<bool> _resendPending(String sid) async {
+  // At launch the dropped decision's local copy may already be applied, so it
+  // is taken back too.
+  Future<_ResendOutcome> _dropAtLaunch() async {
+    await _dropUnrecordedDecision();
+    _consent = defaultConsentState();
+    _marketingConsent = {};
+    return _ResendOutcome.dropped;
+  }
+
+  // Resends a decision ConsentIQ has not recorded, once per launch and never
+  // with a captcha.
+  Future<_ResendOutcome> _resendPending(String sid) async {
     final pending = await _storage.loadPending();
-    if (pending == null) return false;
-    final config = _config;
-    final owned = pending.belongsTo(sid, options.propertyKey, _api.apiUrl);
+    if (pending == null) return _ResendOutcome.none;
+    if (!pending.belongsTo(sid, options.propertyKey, _api.apiUrl)) {
+      // Another person's, property's or server's: never sent here.
+      await _storage.clearPending();
+      return _ResendOutcome.none;
+    }
     // A record the server made after this decision is the newer choice, so it
     // wins.
     final serverAt = _serverConsentedAt;
-    final superseded = serverAt != null && serverAt.isAfter(pending.createdAt);
-    if (!owned ||
-        superseded ||
-        pending.isSpent(clock()) ||
-        (config != null && requiresCaptcha(config))) {
+    if (serverAt != null && serverAt.isAfter(pending.createdAt)) {
       await _storage.clearPending();
-      return false;
+      return _ResendOutcome.none;
+    }
+    final config = _config;
+    if (pending.isSpent(clock()) ||
+        !pending.matches(_noticeVersion, _categoryCodes) ||
+        (config != null && requiresCaptcha(config))) {
+      return _dropAtLaunch();
     }
     await _storage.savePending(pending.retried());
     try {
@@ -462,30 +518,34 @@ class ConsentIQ extends ChangeNotifier {
         cookieConsents: pending.cookieConsents,
         marketingConsents: pending.marketingConsents,
         consentMethod: 'sdk',
-        identityToken: options.identityToken,
+        identityToken: _identityToken,
         subjectSource: _subjectSource,
+        noticeVersion: pending.noticeVersion,
       );
     } on ConsentIQApiException catch (e) {
       _logger.log('Pending consent not recorded: ${e.message}');
-      if (e.statusCode == 403) {
-        await _refused(e);
-      } else if (dropsTheDecision(e.statusCode)) {
-        await _storage.clearPending();
+      if (isFinalStatus(e.statusCode)) {
+        options.onError?.call(
+          ConsentIQError(
+              source: 'consent', code: 'refused', message: e.message),
+        );
+        return _dropAtLaunch();
       }
-      return false;
+      return _ResendOutcome.none;
     } catch (e) {
       _logger.log('Pending consent not recorded: $e');
-      return false;
+      return _ResendOutcome.none;
     }
     await _storage.clearPending();
+    await _storage.clearUnrecorded();
     _consent = normalizeConsentState(pending.cookieConsents);
     _marketingConsent = Map.of(pending.marketingConsents);
-    await _storage.saveConsent(_consent);
+    await _storage.saveConsentFor(_consent, sid);
     options.onConsentChange?.call(
       Map.unmodifiable(_consent),
       Map.unmodifiable(_marketingConsent),
     );
-    return true;
+    return _ResendOutcome.recorded;
   }
 
   Future<void> _startTcf({required bool reopen}) async {
@@ -505,6 +565,7 @@ class ConsentIQ extends ChangeNotifier {
       await session.start(
         subjectId: _subjectId ?? '',
         subjectSource: _subjectSource,
+        identityToken: _identityToken,
         stored: stored,
         consent: stored == null ? null : Map.of(_consent),
       );
@@ -595,7 +656,10 @@ class ConsentIQ extends ChangeNotifier {
     final consent = decision.consent;
     if (consent != null) {
       _consent = normalizeConsentState(consent);
-      await _storage.saveConsent(_consent);
+      final sid = _subjectId;
+      if (sid != null && sid.isNotEmpty) {
+        await _storage.saveConsentFor(_consent, sid);
+      }
     }
     _consentFound = true;
     session.release();
@@ -697,3 +761,15 @@ class ConsentIQ extends ChangeNotifier {
 
 /// The TCF run [ConsentIQ] has under way, for the consent sheet to present.
 TcfSession? tcfSessionOf(ConsentIQ consentIQ) => consentIQ._tcf;
+
+enum _ResendOutcome { none, recorded, dropped }
+
+class _UnrecordedDecision {
+  const _UnrecordedDecision(this.cookieConsents, this.marketingConsents,
+      this.subjectId, this.generation);
+
+  final ConsentState cookieConsents;
+  final MarketingConsentState marketingConsents;
+  final String subjectId;
+  final int generation;
+}

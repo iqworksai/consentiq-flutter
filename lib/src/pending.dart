@@ -1,8 +1,8 @@
 import 'consent_state.dart';
 import 'json.dart';
 
-/// A decision ConsentIQ asked to resend later (429), retried once per launch
-/// without a captcha.
+/// A decision ConsentIQ has not recorded yet (no answer, a 5xx, a 429, an
+/// unanswered challenge), resent once per launch without a captcha.
 class PendingDecision {
   const PendingDecision({
     required this.cookieConsents,
@@ -12,6 +12,8 @@ class PendingDecision {
     required this.subjectId,
     required this.propertyKey,
     required this.apiUrl,
+    this.noticeVersion,
+    this.categoryCodes = const [],
   });
 
   static const int maxAttempts = 3;
@@ -28,6 +30,11 @@ class PendingDecision {
   final String propertyKey;
   final String apiUrl;
 
+  // What it was decided against: one made under another notice or category set
+  // is never resent.
+  final int? noticeVersion;
+  final List<String> categoryCodes;
+
   bool isSpent(DateTime now) =>
       attempts >= maxAttempts || now.difference(createdAt) > maxAge;
 
@@ -35,6 +42,10 @@ class PendingDecision {
       this.subjectId == subjectId &&
       this.propertyKey == propertyKey &&
       this.apiUrl == apiUrl;
+
+  bool matches(int? noticeVersion, List<String> categoryCodes) =>
+      this.noticeVersion == noticeVersion &&
+      this.categoryCodes.join('\u0000') == categoryCodes.join('\u0000');
 
   PendingDecision retried() => PendingDecision(
         cookieConsents: cookieConsents,
@@ -44,6 +55,8 @@ class PendingDecision {
         subjectId: subjectId,
         propertyKey: propertyKey,
         apiUrl: apiUrl,
+        noticeVersion: noticeVersion,
+        categoryCodes: categoryCodes,
       );
 
   Map<String, Object?> toJson() => {
@@ -54,6 +67,8 @@ class PendingDecision {
         'subjectId': subjectId,
         'propertyKey': propertyKey,
         'apiUrl': apiUrl,
+        'noticeVersion': noticeVersion,
+        'categoryCodes': categoryCodes,
       };
 
   static PendingDecision? fromJson(Object? json) {
@@ -78,13 +93,17 @@ class PendingDecision {
       subjectId: subjectId,
       propertyKey: propertyKey,
       apiUrl: apiUrl,
+      noticeVersion: asIntOrNull(map['noticeVersion']),
+      categoryCodes: asStringList(map['categoryCodes']),
     );
   }
 }
 
-/// A refusal that resending the same decision cannot change.
-bool dropsTheDecision(int? statusCode) =>
+/// A refusal that resending the same decision cannot change. No answer, a 5xx,
+/// a 429 or a challenge left unanswered may go through later.
+bool isFinalStatus(int? statusCode) =>
     statusCode == 400 ||
+    statusCode == 403 ||
     statusCode == 404 ||
     statusCode == 409 ||
     statusCode == 422;
