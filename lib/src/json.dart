@@ -22,6 +22,10 @@ List<String> asStringList(Object? value) => value is List
     ? value.whereType<String>().toList(growable: false)
     : const [];
 
+List<int> asIntList(Object? value) => value is List
+    ? value.map(asIntOrNull).whereType<int>().toList(growable: false)
+    : const [];
+
 List<Map<String, dynamic>> asMapList(Object? value) =>
     value is List ? value.map(asMap).toList(growable: false) : const [];
 

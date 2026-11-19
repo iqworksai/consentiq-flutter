@@ -1,24 +1,41 @@
+import 'dart:convert';
+
 import 'package:consentiq/consentiq.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'fixtures.dart';
 
-ConsentIQ build(FakeServer server, {ConsentIQConfig? options}) {
+ConsentIQ build(
+  FakeServer server, {
+  ConsentIQConfig? options,
+  FakeCaptcha? captcha,
+  String apiUrl = testApiUrl,
+}) {
   final config = options ?? const ConsentIQConfig(propertyKey: testPropertyKey);
   return ConsentIQ(
     config,
     apiClient: ConsentIQApiClient(
       propertyKey: config.propertyKey,
-      apiUrl: testApiUrl,
+      apiUrl: apiUrl,
       client: server.client,
     ),
     storage: ConsentStorage(),
+    captchaTokenSource: captcha?.call,
   );
 }
 
+FakeServer captchaServer() => FakeServer(
+      config: configJson(requireCaptcha: true, turnstileSiteKey: 'site-key'),
+    );
+
 Future<String?> cachedConsent() async =>
     (await SharedPreferences.getInstance()).getString('consentiq_consent');
+
+Future<String?> pendingDecision() async =>
+    (await SharedPreferences.getInstance()).getString('consentiq_pending');
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -109,6 +126,7 @@ void main() {
       SharedPreferences.setMockInitialValues({
         'consentiq_subject_id': 'sid-1',
         'consentiq_consent': '{"necessary":true,"analytics":true}',
+        'consentiq_consent_subject': 'sid-1',
       });
       final server = FakeServer();
       final consentIQ = build(server);
@@ -123,6 +141,7 @@ void main() {
       SharedPreferences.setMockInitialValues({
         'consentiq_subject_id': 'sid-1',
         'consentiq_consent': '{"necessary":true,"analytics":true}',
+        'consentiq_consent_subject': 'sid-1',
       });
       final server = FakeServer(consentStatus: 500);
       final consentIQ = build(server);
@@ -133,6 +152,36 @@ void main() {
       expect(consentIQ.hasConsent('analytics'), isTrue);
       expect(logs.where((l) => l.startsWith('[ConsentIQ] Failed to load')),
           hasLength(1));
+    });
+
+    test('a lookup network failure never logs the subject id', () async {
+      SharedPreferences.setMockInitialValues({
+        'consentiq_subject_id': 'sid-private-42',
+      });
+      final client = MockClient((request) async {
+        if (request.url.path.startsWith('/api/public/consent/')) {
+          throw http.ClientException('Connection refused', request.url);
+        }
+        return jsonResponse(configJson(), 200);
+      });
+      final consentIQ = ConsentIQ(
+        const ConsentIQConfig(propertyKey: testPropertyKey),
+        apiClient: ConsentIQApiClient(
+          propertyKey: testPropertyKey,
+          apiUrl: testApiUrl,
+          client: client,
+        ),
+        storage: ConsentStorage(),
+      );
+
+      final logs = await captureLogs(consentIQ.init);
+
+      expect(
+        logs,
+        contains(
+            '[ConsentIQ] Failed to load consent, using local cache: ClientException'),
+      );
+      expect(logs.join('\n'), isNot(contains('sid-private-42')));
     });
 
     test('config failure leaves the app usable and logs once', () async {
@@ -195,15 +244,60 @@ void main() {
         options: const ConsentIQConfig(
           propertyKey: testPropertyKey,
           subjectId: 'app-user-42',
+          identityToken: 'v2.1.sig',
         ),
       );
 
       await consentIQ.init();
 
       expect(consentIQ.subjectId, 'app-user-42');
-      expect(server.requests.last.url, endsWith('/app-user-42'));
+      final restore = server.requests.last;
+      expect(restore.url, endsWith('/app-user-42'));
+      expect(restore.method, 'POST');
+      expect(restore.json['identityToken'], 'v2.1.sig');
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString('consentiq_subject_id'), isNull);
+    });
+
+    test('a supplied subject without a token is not looked up', () async {
+      SharedPreferences.setMockInitialValues({
+        'consentiq_consent': jsonEncode({'necessary': true, 'analytics': true}),
+        'consentiq_consent_subject': 'app-user-42',
+      });
+      final server = FakeServer();
+      final consentIQ = build(
+        server,
+        options: const ConsentIQConfig(
+          propertyKey: testPropertyKey,
+          subjectId: 'app-user-42',
+        ),
+      );
+
+      await consentIQ.init();
+
+      expect(
+        server.requests.where((r) => r.url.contains('/api/public/consent/')),
+        isEmpty,
+      );
+      expect(consentIQ.consent['analytics'], isTrue);
+    });
+
+    test('a generated subject is still looked up without a token', () async {
+      final server = FakeServer();
+      final consentIQ = build(
+        server,
+        options: const ConsentIQConfig(
+          propertyKey: testPropertyKey,
+          identityToken: 'v2.1.sig',
+        ),
+      );
+
+      await consentIQ.init();
+
+      final restore = server.requests
+          .singleWhere((r) => r.url.contains('/api/public/consent/'));
+      expect(restore.method, 'GET');
+      expect(consentIQ.subjectId, isNotNull);
     });
 
     test('autoGenerateSubjectId false skips the consent lookup', () async {
@@ -223,32 +317,14 @@ void main() {
       expect(consentIQ.isSheetVisible, isTrue);
     });
 
-    test('captcha warning is logged exactly once', () async {
-      final consentIQ = build(
-        FakeServer(config: configJson(requireCaptcha: true)),
-      );
-
-      final logs = await captureLogs(() async {
-        await consentIQ.init();
-        await consentIQ.init();
-      });
-
-      expect(
-          logs.where((l) => l == '[ConsentIQ] $captchaWarning'), hasLength(1));
-      expect(
-        captchaWarning,
-        'This property requires a captcha, which mobile SDKs cannot satisfy. '
-        'Turn off "Require captcha" for this property in the ConsentIQ '
-        'dashboard.',
-      );
-    });
-
-    test('no captcha warning when the property does not require one', () async {
-      final consentIQ = build(FakeServer());
+    test('no startup warning when the property requires a captcha', () async {
+      final captcha = FakeCaptcha();
+      final consentIQ = build(captchaServer(), captcha: captcha);
 
       final logs = await captureLogs(consentIQ.init);
 
       expect(logs, isEmpty);
+      expect(captcha.calls, 0);
     });
 
     test('init runs once', () async {
@@ -403,6 +479,204 @@ void main() {
       expect(logs.single, startsWith('[ConsentIQ] Failed to submit consent'));
     });
 
+    test('requireCaptcha: every submit sends a fresh token', () async {
+      final server = captchaServer();
+      final captcha = FakeCaptcha();
+      final consentIQ = build(server, captcha: captcha);
+      await consentIQ.init();
+
+      await consentIQ.acceptAll();
+      await consentIQ.updateMarketingConsent({'email': true});
+
+      expect(captcha.calls, 2);
+      expect(server.submits, hasLength(2));
+      for (final submit in server.submits) {
+        expect(submit.json['captchaToken'], 'tok');
+      }
+      expect(await ConsentStorage().loadConsent(), consentIQ.consent);
+    });
+
+    test('captcha failure: nothing posted, local state kept, warning logged',
+        () async {
+      final server = captchaServer();
+      var changes = 0;
+      ConsentAcceptEvent? accepted;
+      final consentIQ = build(
+        server,
+        options: ConsentIQConfig(
+          propertyKey: testPropertyKey,
+          onConsentChange: (_, __) => changes++,
+          onAccept: (e) => accepted = e,
+        ),
+        captcha: FakeCaptcha(null),
+      );
+      await consentIQ.init();
+
+      final logs = await captureLogs(consentIQ.acceptAll);
+
+      expect(server.submits, isEmpty);
+      expect(consentIQ.hasConsent('analytics'), isTrue);
+      expect(consentIQ.isSheetVisible, isFalse);
+      expect(accepted, isNotNull);
+      expect(changes, 0);
+      expect(await cachedConsent(), isNull);
+      expect(logs, ['[ConsentIQ] Captcha check failed; consent not submitted']);
+    });
+
+    test('a 428 captcha_required is answered once and the consent recorded',
+        () async {
+      final server = FakeServer(submitStatuses: [428, 200]);
+      final captcha = FakeCaptcha();
+      var changes = 0;
+      final consentIQ = build(
+        server,
+        options: ConsentIQConfig(
+          propertyKey: testPropertyKey,
+          onConsentChange: (_, __) => changes++,
+        ),
+        captcha: captcha,
+      );
+      await consentIQ.init();
+
+      await consentIQ.acceptAll();
+
+      expect(server.submits, hasLength(2));
+      expect(server.submits[0].json.containsKey('captchaToken'), isFalse);
+      expect(server.submits[1].json['captchaToken'], 'tok');
+      expect(captcha.calls, 1);
+      expect(changes, 1);
+      expect(await cachedConsent(), isNotNull);
+    });
+
+    test('a challenge is retried once only', () async {
+      final server = FakeServer(submitStatuses: [428]);
+      final captcha = FakeCaptcha();
+      final consentIQ = build(server, captcha: captcha);
+      await consentIQ.init();
+
+      await captureLogs(consentIQ.acceptAll);
+
+      expect(server.submits, hasLength(2));
+      expect(captcha.calls, 1);
+      // A challenge left unanswered may pass later: the decision stands locally
+      // and waits to be resent.
+      expect(await cachedConsent(), isNotNull);
+      expect(await pendingDecision(), isNotNull);
+    });
+
+    test('a cancelled challenge sends nothing more and keeps local state',
+        () async {
+      final server = FakeServer(submitStatuses: [428]);
+      final consentIQ = build(server, captcha: FakeCaptcha(null));
+      await consentIQ.init();
+
+      final logs = await captureLogs(consentIQ.acceptAll);
+
+      expect(server.submits, hasLength(1));
+      expect(consentIQ.hasConsent('analytics'), isTrue);
+      expect(await cachedConsent(), isNotNull);
+      expect(await pendingDecision(), isNotNull);
+      expect(logs, ['[ConsentIQ] Captcha check failed; consent not submitted']);
+    });
+
+    test('another refusal is not a challenge', () async {
+      final server = FakeServer(submitStatus: 403);
+      final captcha = FakeCaptcha();
+      final consentIQ = build(server, captcha: captcha);
+      await consentIQ.init();
+
+      await captureLogs(consentIQ.acceptAll);
+
+      expect(server.submits, hasLength(1));
+      expect(captcha.calls, 0);
+    });
+
+    test(
+        'the identity token goes with every submit for the app\'s own subject, '
+        'and only when given', () async {
+      final server = FakeServer();
+      final consentIQ = build(
+        server,
+        options: const ConsentIQConfig(
+          propertyKey: testPropertyKey,
+          subjectId: 'app-user-42',
+          identityToken: 'v2.1700000000.abc',
+        ),
+      );
+      await consentIQ.init();
+      await consentIQ.acceptAll();
+      await consentIQ.rejectAll();
+      expect(
+        server.submits.map((r) => r.json['identityToken']),
+        ['v2.1700000000.abc', 'v2.1700000000.abc'],
+      );
+
+      final plain = FakeServer();
+      final without = build(plain);
+      await without.init();
+      await without.acceptAll();
+      expect(plain.submits.single.json.containsKey('identityToken'), isFalse);
+    });
+
+    test('an app-chosen subject is marked site, a generated one is not',
+        () async {
+      final server = FakeServer();
+      final site = build(
+        server,
+        options: const ConsentIQConfig(
+          propertyKey: testPropertyKey,
+          subjectId: 'user-42',
+        ),
+      );
+      await site.init();
+      await site.acceptAll();
+      final generated = build(server);
+      await generated.init();
+      await generated.acceptAll();
+
+      expect(server.submits.first.json['subjectSource'], 'site');
+      expect(server.submits.last.json.containsKey('subjectSource'), isFalse);
+    });
+
+    test('an app-chosen subject id with a colon is refused at init', () async {
+      final server = FakeServer();
+      final errors = <ConsentIQError>[];
+      final consentIQ = build(
+        server,
+        options: ConsentIQConfig(
+          propertyKey: testPropertyKey,
+          subjectId: 'site:user-42',
+          onError: errors.add,
+        ),
+      );
+      await consentIQ.init();
+      await consentIQ.acceptAll();
+
+      expect(consentIQ.subjectId, isNull);
+      expect(server.submits, isEmpty);
+      expect(errors.single.source, 'config');
+      expect(errors.single.code, 'invalid-subject-id');
+    });
+
+    test('no captcha required: token source unused, no captchaToken key',
+        () async {
+      for (final config in [
+        configJson(),
+        configJson(requireCaptcha: true),
+        configJson(turnstileSiteKey: 'site-key'),
+      ]) {
+        final server = FakeServer(config: config);
+        final captcha = FakeCaptcha();
+        final consentIQ = build(server, captcha: captcha);
+        await consentIQ.init();
+
+        await consentIQ.acceptAll();
+
+        expect(captcha.calls, 0);
+        expect(server.submits.single.json.containsKey('captchaToken'), isFalse);
+      }
+    });
+
     test('without a subject id nothing is posted', () async {
       final server = FakeServer();
       final consentIQ = build(
@@ -418,6 +692,395 @@ void main() {
 
       expect(server.submits, isEmpty);
       expect(consentIQ.hasConsent('analytics'), isTrue);
+    });
+  });
+
+  group('a decision ConsentIQ asks to resend', () {
+    late List<ConsentIQError> errors;
+    late int changes;
+
+    setUp(() {
+      errors = [];
+      changes = 0;
+    });
+
+    Future<ConsentIQ> launch(
+      FakeServer server, {
+      DateTime? at,
+      FakeCaptcha? captcha,
+      String? subjectId,
+      String apiUrl = testApiUrl,
+    }) async {
+      final consentIQ = build(
+        server,
+        apiUrl: apiUrl,
+        options: ConsentIQConfig(
+          propertyKey: testPropertyKey,
+          subjectId: subjectId,
+          autoShow: false,
+          onConsentChange: (_, __) => changes++,
+          onError: errors.add,
+        ),
+        captcha: captcha,
+      );
+      if (at != null) consentIQ.clock = () => at;
+      await consentIQ.init();
+      return consentIQ;
+    }
+
+    Future<String?> pending() async =>
+        (await SharedPreferences.getInstance()).getString('consentiq_pending');
+
+    Map<String, dynamic> withNotice(int version) {
+      final config = configJson();
+      (config['banner'] as Map<String, dynamic>)['noticeVersion'] = version;
+      return config;
+    }
+
+    Future<bool> unrecorded() async =>
+        (await SharedPreferences.getInstance())
+            .getString('consentiq_unrecorded_decision') ==
+        testPropertyKey;
+
+    test('every retryable failure keeps it', () async {
+      for (final status in [500, 503, 429]) {
+        SharedPreferences.setMockInitialValues({});
+        final consentIQ = await launch(FakeServer(submitStatus: status));
+        await captureLogs(consentIQ.acceptAll);
+        expect(await pending(), isNotNull, reason: '$status');
+        expect(await cachedConsent(), isNotNull, reason: '$status');
+      }
+      expect(errors, isEmpty);
+    });
+
+    test(
+        'a final refusal drops it with its local copy, marks it and tells the '
+        'app', () async {
+      for (final status in [400, 403, 404, 409, 422]) {
+        SharedPreferences.setMockInitialValues({});
+        errors.clear();
+        final consentIQ = await launch(FakeServer(submitStatus: status));
+        await captureLogs(consentIQ.acceptAll);
+        expect(await pending(), isNull, reason: '$status');
+        expect(await cachedConsent(), isNull, reason: '$status');
+        expect(await unrecorded(), isTrue, reason: '$status');
+        expect(errors, hasLength(1), reason: '$status');
+      }
+    });
+
+    test('while the marker stands the next launch restores nothing and asks',
+        () async {
+      await captureLogs(() async =>
+          (await launch(FakeServer(submitStatus: 400))).acceptAll());
+      final next = FakeServer(consent: savedConsentJson());
+      final consentIQ = await launch(next);
+      expect(next.requests.where((r) => r.url.contains('/api/public/consent/')),
+          isEmpty);
+      expect(consentIQ.hasConsent('analytics'), isFalse);
+    });
+
+    test('the next recorded decision clears the marker', () async {
+      final consentIQ = await launch(FakeServer(submitStatuses: [400, 200]));
+      await captureLogs(consentIQ.acceptAll);
+      await captureLogs(consentIQ.rejectAll);
+      expect(await unrecorded(), isFalse);
+    });
+
+    test('any failure on a Require CAPTCHA property is final', () async {
+      final server = FakeServer(
+        config: configJson(requireCaptcha: true, turnstileSiteKey: 'site-key'),
+        submitStatus: 503,
+      );
+      final consentIQ = await launch(server, captcha: FakeCaptcha());
+      await captureLogs(consentIQ.acceptAll);
+      expect(await pending(), isNull);
+      expect(await unrecorded(), isTrue);
+      expect(errors, hasLength(1));
+    });
+
+    test('it carries its notice version and is resent with it', () async {
+      await captureLogs(() async =>
+          (await launch(FakeServer(config: withNotice(4), submitStatus: 429)))
+              .acceptAll());
+      expect(jsonDecode((await pending())!)['noticeVersion'], 4);
+
+      final next = FakeServer(config: withNotice(4));
+      await launch(next);
+      expect(next.submits.single.json['noticeVersion'], 4);
+    });
+
+    test('one made under another notice is dropped and marked', () async {
+      await captureLogs(() async =>
+          (await launch(FakeServer(config: withNotice(4), submitStatus: 429)))
+              .acceptAll());
+
+      final next = FakeServer(config: withNotice(5));
+      final consentIQ = await launch(next);
+      expect(next.submits, isEmpty);
+      expect(await pending(), isNull);
+      expect(await unrecorded(), isTrue);
+      expect(consentIQ.hasConsent('analytics'), isFalse);
+    });
+
+    test('a final refusal of a resend tells the app', () async {
+      await captureLogs(() async =>
+          (await launch(FakeServer(submitStatus: 429))).acceptAll());
+      await captureLogs(() => launch(FakeServer(submitStatus: 422)));
+      expect(errors, hasLength(1));
+      expect(await unrecorded(), isTrue);
+    });
+
+    test('reset clears the marker and the pending decision', () async {
+      final consentIQ = await launch(FakeServer(submitStatus: 400));
+      await captureLogs(consentIQ.acceptAll);
+      await consentIQ.resetConsent();
+      expect(await unrecorded(), isFalse);
+      expect(await pending(), isNull);
+    });
+
+    test('a local copy written for another subject is not inherited', () async {
+      SharedPreferences.setMockInitialValues({
+        'consentiq_consent': jsonEncode({'necessary': true, 'analytics': true}),
+        'consentiq_consent_subject': 'user-a',
+      });
+      final consentIQ = await launch(FakeServer(), subjectId: 'user-b');
+      expect(consentIQ.hasConsent('analytics'), isFalse);
+    });
+
+    test('a refused restore drops the local copy, asks again and tells the app',
+        () async {
+      SharedPreferences.setMockInitialValues({
+        'consentiq_consent': jsonEncode({'necessary': true, 'analytics': true}),
+        'consentiq_consent_subject': 'user-42',
+      });
+      final consentIQ = build(
+        FakeServer(consentStatus: 403),
+        options: ConsentIQConfig(
+          propertyKey: testPropertyKey,
+          subjectId: 'user-42',
+          identityToken: 'v2.1.sig',
+          onError: errors.add,
+        ),
+      );
+      await captureLogs(consentIQ.init);
+      expect(await cachedConsent(), isNull);
+      expect(consentIQ.hasConsent('analytics'), isFalse);
+      expect(consentIQ.isSheetVisible, isTrue);
+      expect(errors.single.code, 'refused');
+    });
+
+    test('the identity token never goes with a generated subject', () async {
+      final server = FakeServer();
+      final consentIQ = build(server,
+          options: const ConsentIQConfig(
+              propertyKey: testPropertyKey, identityToken: 'v2.1.sig'));
+      await consentIQ.init();
+      await consentIQ.acceptAll();
+      expect(server.submits.single.json.containsKey('identityToken'), isFalse);
+    });
+
+    test('429 keeps it, and the next launch sends it without a captcha',
+        () async {
+      final first = FakeServer(submitStatus: 429);
+      await captureLogs(() async => (await launch(first)).acceptAll());
+      expect(await pending(), isNotNull);
+      expect(changes, 0);
+
+      final second = FakeServer();
+      final captcha = FakeCaptcha();
+      final relaunched = await launch(second, captcha: captcha);
+
+      expect(second.submits, hasLength(1));
+      expect(second.submits.single.json.containsKey('captchaToken'), isFalse);
+      expect(second.submits.single.json['cookieConsents']['analytics'], isTrue);
+      expect(await pending(), isNull);
+      expect(relaunched.hasConsent('analytics'), isTrue);
+      expect(await cachedConsent(), isNotNull);
+      expect(changes, 1);
+      expect(captcha.calls, 0);
+    });
+
+    test('the retry is quiet on a challenge and stops after three launches',
+        () async {
+      await captureLogs(() async =>
+          (await launch(FakeServer(submitStatus: 429))).acceptAll());
+
+      final challenging = FakeServer(submitStatuses: [428]);
+      final captcha = FakeCaptcha();
+      for (var i = 0; i < 3; i++) {
+        await launch(challenging, captcha: captcha);
+      }
+      expect(captcha.calls, 0);
+      expect(challenging.submits, hasLength(3));
+      expect(jsonDecode((await pending())!)['attempts'], 3);
+
+      await launch(challenging, captcha: captcha);
+      expect(challenging.submits, hasLength(3));
+      expect(await pending(), isNull);
+    });
+
+    test('a decision older than seven days is dropped', () async {
+      final start = DateTime(2026, 1, 1);
+      await captureLogs(() async =>
+          (await launch(FakeServer(submitStatus: 429), at: start)).acceptAll());
+
+      final later = FakeServer();
+      await launch(later, at: start.add(const Duration(days: 8)));
+
+      expect(later.submits, isEmpty);
+      expect(await pending(), isNull);
+    });
+
+    test('400, 404, 409 and 422 drop it', () async {
+      for (final status in [400, 404, 409, 422]) {
+        await captureLogs(() async =>
+            (await launch(FakeServer(submitStatus: 429))).acceptAll());
+        expect(await pending(), isNotNull, reason: '$status');
+
+        await captureLogs(() async =>
+            (await launch(FakeServer(submitStatus: status))).rejectAll());
+        expect(await pending(), isNull, reason: '$status');
+      }
+    });
+
+    test('403 reaches the app and is not retried', () async {
+      final refusing = FakeServer(
+        submitStatus: 403,
+        submitBody: const {'error': 'Identity token did not verify'},
+      );
+      await captureLogs(() async => (await launch(refusing)).acceptAll());
+      final next = FakeServer();
+      await launch(next);
+
+      expect(next.submits, isEmpty);
+      expect(errors.single.source, 'consent');
+      expect(errors.single.code, 'refused');
+      expect(errors.single.message, 'Identity token did not verify');
+      expect(await pending(), isNull);
+    });
+
+    test('a 403 to the retry reaches the app too', () async {
+      await captureLogs(() async =>
+          (await launch(FakeServer(submitStatus: 429))).acceptAll());
+
+      await captureLogs(() => launch(FakeServer(
+            submitStatus: 403,
+            submitBody: const {'error': 'Verified identity required'},
+          )));
+
+      expect(errors.single.message, 'Verified identity required');
+      expect(await pending(), isNull);
+    });
+
+    test('a property that requires a captcha keeps nothing to retry', () async {
+      await captureLogs(() async => (await launch(
+            FakeServer(
+              config: configJson(
+                  requireCaptcha: true, turnstileSiteKey: 'site-key'),
+              submitStatus: 429,
+            ),
+            captcha: FakeCaptcha(),
+          ))
+              .acceptAll());
+
+      expect(await pending(), isNull);
+    });
+
+    test('it is never sent for someone else', () async {
+      await captureLogs(() async =>
+          (await launch(FakeServer(submitStatus: 429), subjectId: 'user-a'))
+              .acceptAll());
+      expect(await pending(), isNotNull);
+
+      final next = FakeServer();
+      await launch(next, subjectId: 'user-b');
+
+      expect(next.submits, isEmpty);
+      expect(await pending(), isNull);
+    });
+
+    test('it is never sent to another server', () async {
+      await captureLogs(() async =>
+          (await launch(FakeServer(submitStatus: 429), subjectId: 'user-a'))
+              .acceptAll());
+
+      final next = FakeServer();
+      await launch(next,
+          subjectId: 'user-a', apiUrl: 'https://staging.example.test');
+
+      expect(next.submits, isEmpty);
+      expect(await pending(), isNull);
+    });
+
+    test('a new decision replaces one still waiting', () async {
+      final consentIQ = await launch(FakeServer(submitStatuses: [429, 500]));
+      await captureLogs(() => consentIQ.acceptAll());
+      expect(await pending(), isNotNull);
+
+      await captureLogs(() => consentIQ.rejectAll());
+
+      // The newer choice replaces the one waiting.
+      expect(jsonDecode((await pending())!)['cookieConsents']['analytics'],
+          isFalse);
+    });
+
+    test('a newer record on ConsentIQ wins over it', () async {
+      final decidedAt = DateTime.utc(2025, 6, 1);
+      await captureLogs(() async =>
+          (await launch(FakeServer(submitStatus: 429), at: decidedAt))
+              .acceptAll());
+
+      final next = FakeServer(consent: savedConsentJson());
+      await launch(next, at: decidedAt.add(const Duration(minutes: 1)));
+
+      expect(next.submits, isEmpty,
+          reason: 'the record dated 2026-01-01 is newer than the decision');
+      expect(await pending(), isNull);
+    });
+
+    test('an older record on ConsentIQ does not stop the resend', () async {
+      final decidedAt = DateTime.utc(2027, 1, 1);
+      await captureLogs(() async =>
+          (await launch(FakeServer(submitStatus: 429), at: decidedAt))
+              .acceptAll());
+
+      final next = FakeServer(consent: savedConsentJson());
+      await launch(next, at: decidedAt.add(const Duration(minutes: 1)));
+
+      expect(next.submits, hasLength(1));
+      expect(await pending(), isNull);
+    });
+
+    test('a 429 that arrives after a reset is ignored', () async {
+      late ConsentIQ consentIQ;
+      final server = FakeServer(
+        submitStatus: 429,
+        onSubmit: () => consentIQ.resetConsent(),
+      );
+      consentIQ = await launch(server);
+
+      await captureLogs(() => consentIQ.acceptAll());
+
+      expect(await pending(), isNull);
+    });
+
+    test('a decision stored by an older version is discarded', () async {
+      SharedPreferences.setMockInitialValues({
+        'consentiq_pending':
+            '{"cookieConsents":{},"marketingConsents":{},"attempts":0,"createdAt":0}',
+      });
+
+      expect(await ConsentStorage().loadPending(), isNull);
+      expect(await pending(), isNull);
+    });
+
+    test('clearAll forgets it', () async {
+      await captureLogs(() async =>
+          (await launch(FakeServer(submitStatus: 429))).acceptAll());
+
+      await ConsentStorage().clearAll();
+
+      expect(await pending(), isNull);
     });
   });
 

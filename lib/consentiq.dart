@@ -2,7 +2,9 @@
 library;
 
 export 'src/api_client.dart' show ConsentIQApiClient, ConsentIQApiException;
-export 'src/config.dart';
+export 'src/captcha.dart' show CaptchaTokenSource;
+export 'src/config.dart'
+    hide siteSubjectSource, invalidSubjectIdMessage, isValidSubjectId;
 export 'src/consent_gate.dart';
 export 'src/consent_iq.dart' show ConsentIQ, captchaWarning;
 export 'src/consent_sheet.dart'
@@ -12,3 +14,4 @@ export 'src/form_consent.dart';
 export 'src/models.dart';
 export 'src/provider.dart';
 export 'src/storage.dart';
+export 'src/tcf_key_store.dart' show TcfKeyStore;

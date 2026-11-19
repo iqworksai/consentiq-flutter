@@ -9,10 +9,14 @@ const String testApiUrl = 'https://consent.example.test';
 
 Map<String, dynamic> configJson({
   bool requireCaptcha = false,
+  String? turnstileSiteKey,
   String? defaultLanguage = 'en',
   String? noticeUrl = 'https://consent.example.test/api/public/privacy/pk',
   String? primaryColor = '#123456',
+  String? bannerBgColor,
+  String? bannerTextColor,
   String? bannerDescription = 'We use cookies to improve your experience.',
+  Map<String, dynamic>? tcf,
 }) =>
     {
       'property': {
@@ -29,6 +33,8 @@ Map<String, dynamic> configJson({
         'theme': 'dark',
         'showLogo': false,
         'primaryColor': primaryColor,
+        if (bannerBgColor != null) 'bannerBgColor': bannerBgColor,
+        if (bannerTextColor != null) 'bannerTextColor': bannerTextColor,
         'cornerStyle': 'rounded',
         'showCookieIcon': false,
         'overlay': false,
@@ -78,7 +84,7 @@ Map<String, dynamic> configJson({
       'formConsentSources': <Object>[],
       'privacyNoticeUrl': null,
       'requireCaptcha': requireCaptcha,
-      'turnstileSiteKey': null,
+      'turnstileSiteKey': turnstileSiteKey,
       'autoBlock': false,
       'translations': {
         'en': {
@@ -120,7 +126,33 @@ Map<String, dynamic> configJson({
         },
       },
       'rtl': ['ar', 'ur', 'ks', 'sd'],
+      if (tcf != null) 'tcf': tcf,
       'someFutureField': {'ignored': true},
+    };
+
+Map<String, dynamic> tcfJson({
+  bool enabled = true,
+  bool gdprApplies = true,
+  int cmpId = 300,
+  int cmpVersion = 1,
+}) =>
+    {
+      'enabled': enabled,
+      'gdprApplies': gdprApplies,
+      'vendorIds': [1, 2, 755],
+      'publisherCountryCode': 'DE',
+      'publisherRestrictions': [
+        {
+          'purposeId': 2,
+          'restrictionType': 1,
+          'vendorIds': [755],
+        },
+      ],
+      'repromptMonths': 13,
+      'tcfPolicyVersion': 5,
+      'cmpId': cmpId,
+      'cmpVersion': cmpVersion,
+      'vendorListUrl': '/api/public/tcf/$testPropertyKey/vendor-list?v=abc',
     };
 
 Map<String, dynamic> savedConsentJson({
@@ -170,7 +202,10 @@ class FakeServer {
     int consentStatus = 200,
     int submitStatus = 200,
     Map<String, dynamic>? submitBody,
-  })  : _config = config ?? configJson(),
+    List<int>? submitStatuses,
+    this.onSubmit,
+  })  : _submitStatuses = submitStatuses,
+        _config = config ?? configJson(),
         _consent = consent ?? const {'consent': null},
         _configStatus = configStatus,
         _consentStatus = consentStatus,
@@ -184,10 +219,16 @@ class FakeServer {
   final int _consentStatus;
   final int _submitStatus;
   final Map<String, dynamic> _submitBody;
+  // Answers each submit in turn; the last status repeats.
+  final List<int>? _submitStatuses;
   final List<RecordedRequest> requests = [];
+  // Runs while a submit is in flight, before its answer is returned.
+  final Future<void> Function()? onSubmit;
 
-  List<RecordedRequest> get submits =>
-      requests.where((r) => r.method == 'POST').toList();
+  List<RecordedRequest> get submits => requests
+      .where((r) =>
+          r.method == 'POST' && r.request.url.path == '/api/public/consent')
+      .toList();
 
   http.Client get client => MockClient((request) async {
         requests.add(RecordedRequest(request, request.body));
@@ -196,6 +237,15 @@ class FakeServer {
           return jsonResponse(_config, _configStatus);
         }
         if (path == '/api/public/consent' && request.method == 'POST') {
+          await onSubmit?.call();
+          final statuses = _submitStatuses;
+          if (statuses != null) {
+            final status = statuses[
+                (submits.length - 1).clamp(0, statuses.length - 1).toInt()];
+            return status == 428
+                ? jsonResponse(const {'error': 'captcha_required'}, 428)
+                : jsonResponse(_submitBody, status);
+          }
           return jsonResponse(_submitBody, _submitStatus);
         }
         if (path.startsWith('/api/public/consent/')) {
@@ -203,6 +253,22 @@ class FakeServer {
         }
         return http.Response('{"error":"Not found"}', 404);
       });
+}
+
+/// A captcha token source that counts its calls and returns [token], or
+/// throws when [token] is null.
+class FakeCaptcha {
+  FakeCaptcha([this.token = 'tok']);
+
+  final String? token;
+  int calls = 0;
+
+  Future<String> call() async {
+    calls++;
+    final value = token;
+    if (value == null) throw StateError('no token');
+    return value;
+  }
 }
 
 /// Captures `debugPrint` output for the duration of a test body.

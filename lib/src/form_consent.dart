@@ -1,8 +1,11 @@
 import 'package:flutter/foundation.dart';
 
 import 'api_client.dart';
+import 'attestation.dart';
+import 'captcha.dart';
 import 'config.dart';
 import 'consent_state.dart';
+import 'identity.dart';
 import 'log.dart';
 import 'models.dart';
 
@@ -32,6 +35,10 @@ class FormConsent extends ChangeNotifier {
     this.onConsentSubmitted,
     this.onConsentChange,
     ConsentIQApiClient? apiClient,
+    CaptchaTokenSource? captchaTokenSource,
+    this.identityToken,
+    this.identityFor,
+    int? playIntegrityCloudProjectNumber,
     bool debug = false,
   })  : _api = apiClient ??
             ConsentIQApiClient(
@@ -40,11 +47,27 @@ class FormConsent extends ChangeNotifier {
               debug: debug,
             ),
         _ownsApi = apiClient == null,
+        _captchaTokenSource = captchaTokenSource,
         _logger = ConsentIQLogger(debug: debug) {
     _consents = _cleared();
+    _api.attestation ??= AppAttestation(
+      server: _api,
+      apiUrl: _api.apiUrl,
+      propertyKey: propertyKey,
+      playIntegrityCloudProjectNumber: playIntegrityCloudProjectNumber,
+    );
   }
 
   final String subjectId;
+
+  /// Your server's signature for this person, sent with the form unread.
+  final String? identityToken;
+
+  /// The identifier [identityToken] was signed for. When [subjectId] is that
+  /// identifier written differently (an email's case, a phone's spacing) the
+  /// signed form is sent; any other subject goes unsigned, since the token
+  /// cannot verify for it.
+  final String? identityFor;
 
   /// `visitor`, `user` or `subscriber`.
   final String subjectType;
@@ -53,10 +76,12 @@ class FormConsent extends ChangeNotifier {
   final void Function(MarketingConsentState consents)? onConsentChange;
   final ConsentIQApiClient _api;
   final bool _ownsApi;
+  final CaptchaTokenSource? _captchaTokenSource;
   final ConsentIQLogger _logger;
 
   late MarketingConsentState _consents;
   bool _isSubmitting = false;
+  Future<PropertyConfig>? _config;
 
   MarketingConsentState get consents => Map.unmodifiable(_consents);
   bool get isSubmitting => _isSubmitting;
@@ -73,17 +98,40 @@ class FormConsent extends ChangeNotifier {
   }
 
   /// Posts the current selection. Returns null when the subject id is empty or
-  /// the request fails; the failure is logged.
+  /// contains ':', or the request fails; the failure is logged.
   Future<FormConsentResult?> submit() async {
     if (subjectId.isEmpty) return null;
+    if (!isValidSubjectId(subjectId)) {
+      _logger.warn(invalidSubjectIdMessage);
+      return null;
+    }
+    final signed = signedSubject(identityToken, identityFor, subjectId);
     _isSubmitting = true;
     notifyListeners();
     try {
-      final submission = await _api.submitConsent(
-        subjectId: subjectId,
-        subjectType: subjectType,
-        marketingConsents: Map.of(_consents),
-        consentMethod: 'form',
+      final tokenSource = _captchaTokenSource ??
+          CaptchaController.forProperty(_api.apiUrl, _api.propertyKey).token;
+      String? captchaToken;
+      if (await _requiresCaptcha()) {
+        try {
+          captchaToken = await tokenSource();
+        } catch (_) {
+          _logger.warn(captchaFailedWarning);
+          return null;
+        }
+      }
+      final submission = await submitAnsweringChallenge(
+        firstToken: captchaToken,
+        tokenSource: tokenSource,
+        send: (token) => _api.submitConsent(
+          subjectId: signed.subjectId,
+          subjectType: subjectType,
+          marketingConsents: Map.of(_consents),
+          consentMethod: 'form',
+          captchaToken: token,
+          identityToken: signed.identityToken,
+          subjectSource: siteSubjectSource,
+        ),
       );
       final result = FormConsentResult(
         submission: submission,
@@ -91,8 +139,11 @@ class FormConsent extends ChangeNotifier {
       );
       onConsentSubmitted?.call(result);
       return result;
+    } on CaptchaException {
+      _logger.warn(captchaFailedWarning);
+      return null;
     } catch (e) {
-      _logger.warn('Failed to submit form consent: $e');
+      _logger.warn('Failed to submit form consent', e);
       return null;
     } finally {
       _isSubmitting = false;
@@ -103,6 +154,19 @@ class FormConsent extends ChangeNotifier {
   void reset() {
     _consents = _cleared();
     notifyListeners();
+  }
+
+  // A failed load is not cached, and the submit goes ahead without a token:
+  // the server is what enforces the captcha.
+  Future<bool> _requiresCaptcha() async {
+    final config = _config ??= _api.getConfig();
+    try {
+      return requiresCaptcha(await config);
+    } catch (e) {
+      if (identical(_config, config)) _config = null;
+      _logger.warn('Failed to load config', e);
+      return false;
+    }
   }
 
   @override
